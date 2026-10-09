@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.rally.tournaments.test",
+      "sha256_cert_fingerprints": [
+        "AB:C7:2E:3E:61:E5:AE:C3:E7:48:D5:DE:85:7B:BD:6B:03:0C:F7:E3:F1:A7:34:EB:5D:15:95:34:73:91:1F:6C"
+      ]
+    }
+  }
+]

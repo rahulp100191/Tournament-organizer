@@ -19,3 +19,5 @@ android/.gradle/
 
 *.rally-backup.json
 android/local.properties
+
+android/build/

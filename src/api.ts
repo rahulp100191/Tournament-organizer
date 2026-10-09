@@ -1,3 +1,4 @@
+import type { Me, Health, Tournament, RankingRow } from "./contracts";
 import { getAuth } from "firebase/auth";
 export class ApiError extends Error {
   constructor(
@@ -7,6 +8,27 @@ export class ApiError extends Error {
     super(message);
   }
 }
+export function api(path: "/me", method?: string, body?: unknown): Promise<Me>;
+export function api(
+  path: "/health",
+  method?: string,
+  body?: unknown,
+): Promise<Health>;
+export function api(
+  path: "/events",
+  method?: string,
+  body?: unknown,
+): Promise<Tournament[]>;
+export function api(
+  path: "/rankings",
+  method?: string,
+  body?: unknown,
+): Promise<RankingRow[]>;
+export function api<T = any>(
+  path: string,
+  method?: string,
+  body?: unknown,
+): Promise<T>;
 export async function api<T = any>(
   path: string,
   method = "GET",

@@ -1,3 +1,4 @@
+import { PreviewScreen } from "./PreviewScreen";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -154,6 +155,7 @@ function App() {
     ["discover", "Discover", Compass],
     ["athlete", "My Rally", UserRound],
     ["rankings", "Standings", Trophy],
+    ["preview", "App preview", ShieldCheck],
     ...(me?.account.role === "admin" ? [["admin", "Admin", ShieldCheck]] : []),
   ] as const;
   return (
@@ -281,6 +283,8 @@ function App() {
                 )}
               </Suspense>
             )
+          ) : page === "preview" ? (
+            <PreviewScreen />
           ) : page === "rankings" ? (
             <>
               <div className="section-head">

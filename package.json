@@ -13,13 +13,14 @@
     "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
     "db:backup": "tsx --env-file-if-exists=.env scripts/backup.ts",
     "android:generate": "node scripts/android-generate.mjs",
-    "test:browser": "tsx tests/browser.ts"
+    "test:browser": "tsx tests/browser.ts",
+    "android:sign": "node scripts/android-sign.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.1",
     "express": "^5.3.0",
     "firebase": "^13.0.0",
-    "firebase-admin": "^14.5.0",
+    "firebase-admin": "13.10.0",
     "lucide-react": "^0.468.0",
     "pg": "^8.23.1",
     "react": "^19.1.0",
@@ -37,14 +38,18 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^4.5.0",
+    "esbuild": "^0.25.12",
     "prettier": "^3.9.9",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^7.0.0",
-    "vite-plugin-pwa": "^1.0.0",
-    "esbuild": "^0.25.12"
+    "vite-plugin-pwa": "^1.0.0"
   },
   "overrides": {
-    "@grpc/grpc-js": "^1.14.0"
+    "@grpc/grpc-js": "^1.14.0",
+    "uuid": "^11.1.1"
+  },
+  "engines": {
+    "node": "24.x"
   }
 }
