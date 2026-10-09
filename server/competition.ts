@@ -96,63 +96,64 @@ export async function draw(
     );
     await tx.query("DELETE FROM matches WHERE category_id=$1", [id]);
     await tx.query("DELETE FROM awards WHERE category_id=$1", [id]);
+    const fixtures: any[] = [];
     if (c.format === "round_robin") {
-      let pos = 0;
+      let position = 0;
       for (const f of roundRobin(ids))
-        await tx.query(
-          "INSERT INTO matches(id,category_id,round,position,entry_a,entry_b) VALUES($1,$2,$3,$4,$5,$6)",
-          [randomUUID(), id, f.round, ++pos, f.a, f.b],
-        );
+        fixtures.push({
+          id: randomUUID(),
+          round: f.round,
+          position: ++position,
+          entry_a: f.a,
+          entry_b: f.b,
+          next_match: null,
+          next_slot: null,
+          winner_id: null,
+          status: "pending",
+        });
     } else {
-      const size = 2 ** Math.ceil(Math.log2(ids.length));
-      const rounds = Math.log2(size),
+      const size = 2 ** Math.ceil(Math.log2(ids.length)),
+        rounds = Math.log2(size),
         rows: string[][] = [];
       for (let r = 0; r < rounds; r++)
         rows.push(
           Array.from({ length: size / 2 ** (r + 1) }, () => randomUUID()),
         );
       const slots = seedSlots(size).map((n) => ids[n - 1] || null);
-      for (let r = rounds - 1; r >= 0; r--)
-        for (let pos = 0; pos < rows[r].length; pos++)
-          await tx.query(
-            "INSERT INTO matches(id,category_id,round,position,entry_a,entry_b,next_match,next_slot) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
-            [
-              rows[r][pos],
-              id,
-              r + 1,
-              pos + 1,
-              r === 0 ? slots[pos * 2] : null,
-              r === 0 ? slots[pos * 2 + 1] : null,
-              rows[r + 1]?.[Math.floor(pos / 2)] || null,
-              r < rounds - 1 ? (pos % 2 ? "b" : "a") : null,
-            ],
-          );
-      for (const mid of rows[0]) {
-        const m = await one(tx, "SELECT * FROM matches WHERE id=$1", [mid]);
+      for (let r = 0; r < rounds; r++)
+        for (let position = 0; position < rows[r].length; position++)
+          fixtures.push({
+            id: rows[r][position],
+            round: r + 1,
+            position: position + 1,
+            entry_a: r === 0 ? slots[position * 2] : null,
+            entry_b: r === 0 ? slots[position * 2 + 1] : null,
+            next_match: rows[r + 1]?.[Math.floor(position / 2)] || null,
+            next_slot: r < rounds - 1 ? (position % 2 ? "b" : "a") : null,
+            winner_id: null,
+            status: "pending",
+          });
+      const byId = new Map(fixtures.map((m) => [m.id, m]));
+      for (const m of fixtures.filter((m) => m.round === 1))
         if (!m.entry_a || !m.entry_b) {
-          const win = m.entry_a || m.entry_b;
-          await tx.query(
-            `UPDATE matches SET winner_id=$2,status='bye' WHERE id=$1`,
-            [mid, win],
-          );
+          m.winner_id = m.entry_a || m.entry_b;
+          m.status = "bye";
           if (m.next_match)
-            await tx.query(
-              `UPDATE matches SET ${m.next_slot === "a" ? "entry_a" : "entry_b"}=$2 WHERE id=$1`,
-              [m.next_match, win],
-            );
+            byId.get(m.next_match)["entry_" + m.next_slot] = m.winner_id;
         }
-      }
     }
+    await tx.query(
+      `INSERT INTO matches(id,category_id,round,position,entry_a,entry_b,next_match,next_slot,winner_id,status) SELECT id,$2,round,position,entry_a,entry_b,next_match,next_slot,winner_id,status FROM jsonb_to_recordset($1::jsonb) AS x(id uuid,round integer,position integer,entry_a uuid,entry_b uuid,next_match uuid,next_slot text,winner_id uuid,status text)`,
+      [JSON.stringify(fixtures), id],
+    );
     await tx.query("UPDATE categories SET draw_published=true WHERE id=$1", [
       id,
     ]);
     await audit(tx, a, "draw.published", id, { seeds: ids, format: c.format });
-    for (const eid of ids)
-      await tell(
-        tx,
-        eid,
-        "Draw published for " + e.name + ". Check your fixtures.",
-      );
+    await tx.query(
+      `INSERT INTO notifications(id,account_id,text) SELECT gen_random_uuid(),x.owner_id,$2 FROM (SELECT DISTINCT a.owner_id FROM entry_members em JOIN athletes a ON a.id=em.athlete_id WHERE em.entry_id=ANY($1::uuid[])) x`,
+      [ids, "Draw published for " + e.name + ". Check your fixtures."],
+    );
     return (
       await tx.query(
         "SELECT * FROM matches WHERE category_id=$1 ORDER BY round,position",
@@ -193,7 +194,7 @@ function scoreValid(s: any, m: any, bestOf: number) {
 export async function standings(tx: Sql, category: string) {
   const entries = (
     await tx.query(
-      `SELECT id FROM entries WHERE category_id=$1 AND status IN ('confirmed','withdrawal_requested','withdrawn') ORDER BY created_at,id`,
+      `SELECT id FROM entries WHERE id IN (SELECT entry_a FROM matches WHERE category_id=$1 UNION SELECT entry_b FROM matches WHERE category_id=$1) ORDER BY created_at,id`,
       [category],
     )
   ).rows;
@@ -250,7 +251,7 @@ export async function recalculate(tx: Sql, c: any) {
   const placements = new Map<string, { placement: string; points: number }>();
   const entries = (
     await tx.query(
-      "SELECT id FROM entries WHERE category_id=$1 AND status IN ('confirmed','withdrawal_requested','withdrawn')",
+      "SELECT id FROM entries WHERE id IN (SELECT entry_a FROM matches WHERE category_id=$1 UNION SELECT entry_b FROM matches WHERE category_id=$1)",
       [c.id],
     )
   ).rows;
@@ -297,18 +298,11 @@ export async function recalculate(tx: Sql, c: any) {
           points: points.semi,
         });
   }
-  for (const [id, p] of placements) {
-    const members = (
-      await tx.query("SELECT athlete_id FROM entry_members WHERE entry_id=$1", [
-        id,
-      ])
-    ).rows;
-    for (const m of members)
-      await tx.query(
-        "INSERT INTO awards(category_id,athlete_id,points,placement) VALUES($1,$2,$3,$4)",
-        [c.id, m.athlete_id, p.points, p.placement],
-      );
-  }
+  const awarded = [...placements].map(([entry_id, p]) => ({ entry_id, ...p }));
+  await tx.query(
+    `INSERT INTO awards(category_id,athlete_id,points,placement) SELECT $2,em.athlete_id,x.points,x.placement FROM jsonb_to_recordset($1::jsonb) AS x(entry_id uuid,points integer,placement text) JOIN entry_members em ON em.entry_id=x.entry_id`,
+    [JSON.stringify(awarded), c.id],
+  );
 }
 export async function recordResult(
   db: Database,

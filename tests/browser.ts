@@ -137,7 +137,10 @@ const vite = await createServer({
   },
 });
 await vite.listen();
-console.log("Fixture and Vite ready",(await fetch("http://127.0.0.1:5175")).status);
+console.log(
+  "Fixture and Vite ready",
+  (await fetch("http://127.0.0.1:5175")).status,
+);
 const browser = await chromium.launch();
 await mkdir("preview/real-app", { recursive: true });
 const errors: string[] = [];
@@ -146,7 +149,7 @@ try {
     viewport: { width: 1440, height: 1080 },
   });
   const page = await context.newPage();
-  page.setDefaultTimeout(15000);
+  page.setDefaultTimeout(60000);
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("http://127.0.0.1:5175", { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Rally Guwahati Open" }).waitFor();

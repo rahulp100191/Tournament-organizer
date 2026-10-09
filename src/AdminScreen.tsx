@@ -827,7 +827,8 @@ export function EventForm({
   );
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  const set = (k: string, v: any) => setE({ ...e, [k]: v });
+  const set = (k: string, v: any) =>
+    setE((previous: any) => ({ ...previous, [k]: v }));
   const cat = (i: number, k: string, v: any) =>
     set(
       "categories",

@@ -109,12 +109,14 @@ export function createApp(options: Options = {}) {
         process.env.COMMERCIAL_LAUNCH_ENABLED === "true"
           ? "live"
           : "test",
-      database_configured: !!process.env.DATABASE_URL,
-      auth_configured: !!(
-        process.env.FIREBASE_PROJECT_ID &&
-        process.env.FIREBASE_CLIENT_EMAIL &&
-        process.env.FIREBASE_PRIVATE_KEY
-      ),
+      database_configured: !!options.db || !!process.env.DATABASE_URL,
+      auth_configured:
+        !!options.authenticate ||
+        !!(
+          process.env.FIREBASE_PROJECT_ID &&
+          process.env.FIREBASE_CLIENT_EMAIL &&
+          process.env.FIREBASE_PRIVATE_KEY
+        ),
     })),
   );
   app.get(
@@ -203,6 +205,7 @@ export function createApp(options: Options = {}) {
       try {
         if (!["GET", "HEAD"].includes(req.method)) {
           const bucket = account(req).id + ":" + Math.floor(Date.now() / 60000);
+          await db.query("DELETE FROM api_limits WHERE resets_at<now()");
           const r = await one(
             db,
             `INSERT INTO api_limits(bucket,count,resets_at) VALUES($1,1,now()+interval '2 minutes') ON CONFLICT(bucket) DO UPDATE SET count=api_limits.count+1 RETURNING count`,
@@ -438,10 +441,18 @@ export function createApp(options: Options = {}) {
     "/api/v1/me/payments/:id/correction",
     endpoint(async (req) =>
       db.transaction(async (tx) => {
-        const payment = await one(tx, "SELECT * FROM payments WHERE id=$1", [
+        const before = await one(tx, "SELECT * FROM payments WHERE id=$1", [
           uuid.parse(req.params.id),
         ]);
-        await member(tx, account(req), payment.entry_id);
+        const entry = await member(tx, account(req), before.entry_id);
+        await one(tx, "SELECT id FROM categories WHERE id=$1 FOR UPDATE", [
+          entry.category_id,
+        ]);
+        const payment = await one(
+          tx,
+          "SELECT * FROM payments WHERE id=$1 FOR UPDATE",
+          [before.id],
+        );
         if (payment.status === "confirmed")
           fail(
             409,
@@ -906,7 +917,7 @@ export function createApp(options: Options = {}) {
     endpoint(async (req, res) => {
       const rows = (
         await db.query(
-          `SELECT en.id,c.name category,en.status,en.fee,(SELECT string_agg(a.name,' / ') FROM entry_members m JOIN athletes a ON a.id=m.athlete_id WHERE m.entry_id=en.id) athletes,p.reference,p.status payment_status FROM entries en JOIN categories c ON c.id=en.category_id LEFT JOIN payments p ON p.entry_id=en.id WHERE c.event_id=$1 ORDER BY en.created_at`,
+          `SELECT en.id,c.name category,en.status,en.fee fee_paise,(SELECT string_agg(a.name,' / ') FROM entry_members m JOIN athletes a ON a.id=m.athlete_id WHERE m.entry_id=en.id) athletes,p.reference,p.status payment_status FROM entries en JOIN categories c ON c.id=en.category_id LEFT JOIN payments p ON p.entry_id=en.id WHERE c.event_id=$1 ORDER BY en.created_at`,
           [uuid.parse(req.params.id)],
         )
       ).rows;
@@ -920,7 +931,7 @@ export function createApp(options: Options = {}) {
         "id",
         "category",
         "status",
-        "fee",
+        "fee_paise",
         "athletes",
         "reference",
         "payment_status",

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { api, levels, sports } from "./api";
+import { api, levels, sports, upload } from "./api";
+import { PrivatePhoto } from "./PrivatePhoto";
 export function ProfileForm({
   profile,
   onSave,
@@ -45,7 +46,8 @@ export function ProfileForm({
   );
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  const set = (k: string, v: any) => setP({ ...p, [k]: v });
+  const set = (k: string, v: any) =>
+    setP((previous: any) => ({ ...previous, [k]: v }));
   const changeSport = (i: number, k: string, v: any) =>
     set(
       "sports",
@@ -402,6 +404,39 @@ export function ProfileForm({
           </label>
         ))}
       </div>
+      <label className="field">
+        Private profile photo (optional, maximum 2 MB)
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          disabled={busy}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            setBusy(true);
+            try {
+              const image = await upload(file, "avatar");
+              set("photo_url", "/api/v1/me/uploads/" + image.id);
+            } catch (error) {
+              setError((error as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      </label>
+      {p.photo_url && (
+        <>
+          <PrivatePhoto path={p.photo_url} name={p.name} />
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => set("photo_url", null)}
+          >
+            Remove profile photo
+          </button>
+        </>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}

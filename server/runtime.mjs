@@ -111,7 +111,7 @@ var profileInput = z.object({
   guardian_relationship: optional,
   consent: z.boolean().default(false),
   is_public: z.boolean().default(false),
-  photo_url: z.string().max(1e3).optional(),
+  photo_url: z.string().max(1e3).nullable().optional(),
   academy: optional,
   coach: optional,
   goal: optional,
@@ -266,15 +266,10 @@ async function audit(db, a, action, id, details = {}) {
   );
 }
 async function tell(db, entryId, text2) {
-  const owners = (await db.query(
-    `SELECT owner_id FROM entries WHERE id=$1 UNION SELECT a.owner_id FROM entry_members m JOIN athletes a ON a.id=m.athlete_id WHERE m.entry_id=$1`,
-    [entryId]
-  )).rows;
-  for (const o of owners)
-    await db.query(
-      "INSERT INTO notifications(id,account_id,text) VALUES($1,$2,$3)",
-      [randomUUID(), o.owner_id, text2]
-    );
+  await db.query(
+    `INSERT INTO notifications(id,account_id,text) SELECT gen_random_uuid(),x.owner_id,$2 FROM (SELECT owner_id FROM entries WHERE id=$1 UNION SELECT a.owner_id FROM entry_members m JOIN athletes a ON a.id=m.athlete_id WHERE m.entry_id=$1) x`,
+    [entryId, text2]
+  );
 }
 async function owned(db, a, id) {
   return one(db, "SELECT * FROM athletes WHERE id=$1 AND owner_id=$2", [
@@ -311,6 +306,19 @@ async function saveProfile(db, a, input, id) {
   return db.transaction(async (tx) => {
     if (id) await owned(tx, a, id);
     const pid = id || randomUUID();
+    if (p.sports.some((s) => s.years > age))
+      fail(400, "Years playing cannot exceed the athlete\u2019s age.");
+    if (p.photo_url) {
+      const photoId = p.photo_url.match(
+        /^\/api\/v1\/me\/uploads\/([a-f0-9-]{36})$/
+      )?.[1];
+      if (!photoId) fail(400, "Use a private profile image uploaded to Rally.");
+      await one(
+        tx,
+        "SELECT id FROM uploads WHERE id=$1 AND owner_id=$2 AND purpose='avatar'",
+        [photoId, a.id]
+      );
+    }
     if (id && (await tx.query(
       `SELECT 1 FROM entry_members m JOIN entries e ON e.id=m.entry_id JOIN categories c ON c.id=e.category_id JOIN events ev ON ev.id=c.event_id WHERE m.athlete_id=$1 AND e.status IN ('partner_pending','awaiting_payment','awaiting_verification','confirmed') AND ev.status NOT IN ('completed','cancelled')`,
       [id]
@@ -905,62 +913,62 @@ async function draw(db, a, id, seeds) {
     );
     await tx.query("DELETE FROM matches WHERE category_id=$1", [id]);
     await tx.query("DELETE FROM awards WHERE category_id=$1", [id]);
+    const fixtures = [];
     if (c.format === "round_robin") {
-      let pos = 0;
+      let position = 0;
       for (const f of roundRobin(ids))
-        await tx.query(
-          "INSERT INTO matches(id,category_id,round,position,entry_a,entry_b) VALUES($1,$2,$3,$4,$5,$6)",
-          [randomUUID2(), id, f.round, ++pos, f.a, f.b]
-        );
+        fixtures.push({
+          id: randomUUID2(),
+          round: f.round,
+          position: ++position,
+          entry_a: f.a,
+          entry_b: f.b,
+          next_match: null,
+          next_slot: null,
+          winner_id: null,
+          status: "pending"
+        });
     } else {
-      const size = 2 ** Math.ceil(Math.log2(ids.length));
-      const rounds = Math.log2(size), rows = [];
+      const size = 2 ** Math.ceil(Math.log2(ids.length)), rounds = Math.log2(size), rows = [];
       for (let r = 0; r < rounds; r++)
         rows.push(
           Array.from({ length: size / 2 ** (r + 1) }, () => randomUUID2())
         );
       const slots = seedSlots(size).map((n) => ids[n - 1] || null);
-      for (let r = rounds - 1; r >= 0; r--)
-        for (let pos = 0; pos < rows[r].length; pos++)
-          await tx.query(
-            "INSERT INTO matches(id,category_id,round,position,entry_a,entry_b,next_match,next_slot) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
-            [
-              rows[r][pos],
-              id,
-              r + 1,
-              pos + 1,
-              r === 0 ? slots[pos * 2] : null,
-              r === 0 ? slots[pos * 2 + 1] : null,
-              rows[r + 1]?.[Math.floor(pos / 2)] || null,
-              r < rounds - 1 ? pos % 2 ? "b" : "a" : null
-            ]
-          );
-      for (const mid of rows[0]) {
-        const m = await one(tx, "SELECT * FROM matches WHERE id=$1", [mid]);
+      for (let r = 0; r < rounds; r++)
+        for (let position = 0; position < rows[r].length; position++)
+          fixtures.push({
+            id: rows[r][position],
+            round: r + 1,
+            position: position + 1,
+            entry_a: r === 0 ? slots[position * 2] : null,
+            entry_b: r === 0 ? slots[position * 2 + 1] : null,
+            next_match: rows[r + 1]?.[Math.floor(position / 2)] || null,
+            next_slot: r < rounds - 1 ? position % 2 ? "b" : "a" : null,
+            winner_id: null,
+            status: "pending"
+          });
+      const byId = new Map(fixtures.map((m) => [m.id, m]));
+      for (const m of fixtures.filter((m2) => m2.round === 1))
         if (!m.entry_a || !m.entry_b) {
-          const win = m.entry_a || m.entry_b;
-          await tx.query(
-            `UPDATE matches SET winner_id=$2,status='bye' WHERE id=$1`,
-            [mid, win]
-          );
+          m.winner_id = m.entry_a || m.entry_b;
+          m.status = "bye";
           if (m.next_match)
-            await tx.query(
-              `UPDATE matches SET ${m.next_slot === "a" ? "entry_a" : "entry_b"}=$2 WHERE id=$1`,
-              [m.next_match, win]
-            );
+            byId.get(m.next_match)["entry_" + m.next_slot] = m.winner_id;
         }
-      }
     }
+    await tx.query(
+      `INSERT INTO matches(id,category_id,round,position,entry_a,entry_b,next_match,next_slot,winner_id,status) SELECT id,$2,round,position,entry_a,entry_b,next_match,next_slot,winner_id,status FROM jsonb_to_recordset($1::jsonb) AS x(id uuid,round integer,position integer,entry_a uuid,entry_b uuid,next_match uuid,next_slot text,winner_id uuid,status text)`,
+      [JSON.stringify(fixtures), id]
+    );
     await tx.query("UPDATE categories SET draw_published=true WHERE id=$1", [
       id
     ]);
     await audit(tx, a, "draw.published", id, { seeds: ids, format: c.format });
-    for (const eid of ids)
-      await tell(
-        tx,
-        eid,
-        "Draw published for " + e.name + ". Check your fixtures."
-      );
+    await tx.query(
+      `INSERT INTO notifications(id,account_id,text) SELECT gen_random_uuid(),x.owner_id,$2 FROM (SELECT DISTINCT a.owner_id FROM entry_members em JOIN athletes a ON a.id=em.athlete_id WHERE em.entry_id=ANY($1::uuid[])) x`,
+      [ids, "Draw published for " + e.name + ". Check your fixtures."]
+    );
     return (await tx.query(
       "SELECT * FROM matches WHERE category_id=$1 ORDER BY round,position",
       [id]
@@ -990,7 +998,7 @@ function scoreValid(s, m, bestOf) {
 }
 async function standings(tx, category) {
   const entries = (await tx.query(
-    `SELECT id FROM entries WHERE category_id=$1 AND status IN ('confirmed','withdrawal_requested','withdrawn') ORDER BY created_at,id`,
+    `SELECT id FROM entries WHERE id IN (SELECT entry_a FROM matches WHERE category_id=$1 UNION SELECT entry_b FROM matches WHERE category_id=$1) ORDER BY created_at,id`,
     [category]
   )).rows;
   const table = new Map(
@@ -1037,7 +1045,7 @@ async function recalculate(tx, c) {
   const points = c.points;
   const placements = /* @__PURE__ */ new Map();
   const entries = (await tx.query(
-    "SELECT id FROM entries WHERE category_id=$1 AND status IN ('confirmed','withdrawal_requested','withdrawn')",
+    "SELECT id FROM entries WHERE id IN (SELECT entry_a FROM matches WHERE category_id=$1 UNION SELECT entry_b FROM matches WHERE category_id=$1)",
     [c.id]
   )).rows;
   for (const e of entries)
@@ -1078,16 +1086,11 @@ async function recalculate(tx, c) {
           points: points.semi
         });
   }
-  for (const [id, p] of placements) {
-    const members = (await tx.query("SELECT athlete_id FROM entry_members WHERE entry_id=$1", [
-      id
-    ])).rows;
-    for (const m of members)
-      await tx.query(
-        "INSERT INTO awards(category_id,athlete_id,points,placement) VALUES($1,$2,$3,$4)",
-        [c.id, m.athlete_id, p.points, p.placement]
-      );
-  }
+  const awarded = [...placements].map(([entry_id, p]) => ({ entry_id, ...p }));
+  await tx.query(
+    `INSERT INTO awards(category_id,athlete_id,points,placement) SELECT $2,em.athlete_id,x.points,x.placement FROM jsonb_to_recordset($1::jsonb) AS x(entry_id uuid,points integer,placement text) JOIN entry_members em ON em.entry_id=x.entry_id`,
+    [JSON.stringify(awarded), c.id]
+  );
 }
 async function recordResult(db, a, id, input) {
   const s = resultInput.parse(input);
@@ -1224,8 +1227,8 @@ function createApp(options = {}) {
     endpoint(async () => ({
       status: process.env.DATABASE_URL ? "configured" : "setup_required",
       payments_mode: process.env.PAYMENTS_MODE === "live" && process.env.COMMERCIAL_LAUNCH_ENABLED === "true" ? "live" : "test",
-      database_configured: !!process.env.DATABASE_URL,
-      auth_configured: !!(process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY)
+      database_configured: !!options.db || !!process.env.DATABASE_URL,
+      auth_configured: !!options.authenticate || !!(process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY)
     }))
   );
   app.get(
@@ -1301,6 +1304,7 @@ function createApp(options = {}) {
       try {
         if (!["GET", "HEAD"].includes(req.method)) {
           const bucket = account(req).id + ":" + Math.floor(Date.now() / 6e4);
+          await db.query("DELETE FROM api_limits WHERE resets_at<now()");
           const r = await one(
             db,
             `INSERT INTO api_limits(bucket,count,resets_at) VALUES($1,1,now()+interval '2 minutes') ON CONFLICT(bucket) DO UPDATE SET count=api_limits.count+1 RETURNING count`,
@@ -1508,10 +1512,18 @@ function createApp(options = {}) {
     "/api/v1/me/payments/:id/correction",
     endpoint(
       async (req) => db.transaction(async (tx) => {
-        const payment = await one(tx, "SELECT * FROM payments WHERE id=$1", [
+        const before = await one(tx, "SELECT * FROM payments WHERE id=$1", [
           uuid.parse(req.params.id)
         ]);
-        await member(tx, account(req), payment.entry_id);
+        const entry = await member(tx, account(req), before.entry_id);
+        await one(tx, "SELECT id FROM categories WHERE id=$1 FOR UPDATE", [
+          entry.category_id
+        ]);
+        const payment = await one(
+          tx,
+          "SELECT * FROM payments WHERE id=$1 FOR UPDATE",
+          [before.id]
+        );
         if (payment.status === "confirmed")
           fail(
             409,
@@ -1932,7 +1944,7 @@ function createApp(options = {}) {
     "/api/v1/admin/events/:id/export",
     endpoint(async (req, res) => {
       const rows = (await db.query(
-        `SELECT en.id,c.name category,en.status,en.fee,(SELECT string_agg(a.name,' / ') FROM entry_members m JOIN athletes a ON a.id=m.athlete_id WHERE m.entry_id=en.id) athletes,p.reference,p.status payment_status FROM entries en JOIN categories c ON c.id=en.category_id LEFT JOIN payments p ON p.entry_id=en.id WHERE c.event_id=$1 ORDER BY en.created_at`,
+        `SELECT en.id,c.name category,en.status,en.fee fee_paise,(SELECT string_agg(a.name,' / ') FROM entry_members m JOIN athletes a ON a.id=m.athlete_id WHERE m.entry_id=en.id) athletes,p.reference,p.status payment_status FROM entries en JOIN categories c ON c.id=en.category_id LEFT JOIN payments p ON p.entry_id=en.id WHERE c.event_id=$1 ORDER BY en.created_at`,
         [uuid.parse(req.params.id)]
       )).rows;
       const cell = (v) => '"' + String(v ?? "").replace(/^[=+@-]/, "'$&").replaceAll('"', '""') + '"';
@@ -1940,7 +1952,7 @@ function createApp(options = {}) {
         "id",
         "category",
         "status",
-        "fee",
+        "fee_paise",
         "athletes",
         "reference",
         "payment_status"

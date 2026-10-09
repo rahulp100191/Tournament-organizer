@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, date, money, upload } from "./api";
 import { ProfileForm } from "./ProfileForm";
+import { PrivatePhoto } from "./PrivatePhoto";
 const label = (status: string) =>
   ({
     awaiting_verification: "Awaiting payment verification",
@@ -118,6 +119,9 @@ export function AthleteScreen({
                   · {p.is_public ? "Public results" : "Private"}
                 </span>
                 <h2>{p.name}</h2>
+                {p.photo_url && (
+                  <PrivatePhoto path={p.photo_url} name={p.name} />
+                )}
                 <p>
                   {p.city}, {p.state}
                 </p>

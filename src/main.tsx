@@ -133,8 +133,9 @@ function App() {
     );
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
-  const setup = health && !health.database_configured;
-  const displayed = setup ? samples : events;
+  const setup =
+    health && (!health.database_configured || !health.auth_configured);
+  const displayed = events.length ? events : setup ? samples : events;
   const filtered = displayed.filter(
     (e) =>
       (!filters.sport || e.sport === filters.sport) &&

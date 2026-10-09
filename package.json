@@ -14,7 +14,8 @@
     "db:backup": "tsx --env-file-if-exists=.env scripts/backup.ts",
     "android:generate": "node scripts/android-generate.mjs",
     "test:browser": "tsx tests/browser.ts",
-    "android:sign": "node scripts/android-sign.mjs"
+    "android:sign": "node scripts/android-sign.mjs",
+    "test:neon": "tsx --env-file-if-exists=.env scripts/verify-neon.ts"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.1",

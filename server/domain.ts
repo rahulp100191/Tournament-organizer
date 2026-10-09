@@ -44,18 +44,12 @@ export async function audit(
   );
 }
 export async function tell(db: Sql, entryId: string, text: string) {
-  const owners = (
-    await db.query(
-      `SELECT owner_id FROM entries WHERE id=$1 UNION SELECT a.owner_id FROM entry_members m JOIN athletes a ON a.id=m.athlete_id WHERE m.entry_id=$1`,
-      [entryId],
-    )
-  ).rows;
-  for (const o of owners)
-    await db.query(
-      "INSERT INTO notifications(id,account_id,text) VALUES($1,$2,$3)",
-      [randomUUID(), o.owner_id, text],
-    );
+  await db.query(
+    `INSERT INTO notifications(id,account_id,text) SELECT gen_random_uuid(),x.owner_id,$2 FROM (SELECT owner_id FROM entries WHERE id=$1 UNION SELECT a.owner_id FROM entry_members m JOIN athletes a ON a.id=m.athlete_id WHERE m.entry_id=$1) x`,
+    [entryId, text],
+  );
 }
+
 export async function owned(db: Sql, a: Account, id: string) {
   return one(db, "SELECT * FROM athletes WHERE id=$1 AND owner_id=$2", [
     id,
@@ -96,6 +90,19 @@ export async function saveProfile(
   return db.transaction(async (tx) => {
     if (id) await owned(tx, a, id);
     const pid = id || randomUUID();
+    if (p.sports.some((s) => s.years > age))
+      fail(400, "Years playing cannot exceed the athlete’s age.");
+    if (p.photo_url) {
+      const photoId = p.photo_url.match(
+        /^\/api\/v1\/me\/uploads\/([a-f0-9-]{36})$/,
+      )?.[1];
+      if (!photoId) fail(400, "Use a private profile image uploaded to Rally.");
+      await one(
+        tx,
+        "SELECT id FROM uploads WHERE id=$1 AND owner_id=$2 AND purpose='avatar'",
+        [photoId, a.id],
+      );
+    }
     if (
       id &&
       (

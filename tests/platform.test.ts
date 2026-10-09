@@ -137,6 +137,7 @@ async function request(
   const r = await fetch(url + "/api/v1" + path, {
     method,
     headers: {
+      Connection: "close",
       ...(user === null
         ? {}
         : {
@@ -214,6 +215,34 @@ test("Drafts stay private; publishing is visible to anonymous users; admin and o
   );
   await eventStatus(db, admin, e.id, "published");
   assert.equal((await request("/events/" + e.id)).status, 200);
+});
+test("Own profile edits accept empty photo metadata and reject another owner’s private image", async () => {
+  const before = (await request("/me", 10)).json.data.profiles[0];
+  assert.equal(before.photo_url, null);
+  const edited = {
+    ...before,
+    dob: String(before.dob).slice(0, 10),
+    name: "Updated player",
+    consent: false,
+  };
+  assert.equal(
+    (await request("/me/profiles/" + before.id, 10, "PUT", edited)).status,
+    200,
+  );
+  const image = randomUUID();
+  await db.query(
+    "INSERT INTO uploads(id,owner_id,purpose,pathname,url,content_type) VALUES($1,$2,'avatar','avatar/other','https://example.test/avatar','image/jpeg')",
+    [image, people[9].id],
+  );
+  assert.equal(
+    (
+      await request("/me/profiles/" + before.id, 10, "PUT", {
+        ...edited,
+        photo_url: "/api/v1/me/uploads/" + image,
+      })
+    ).status,
+    404,
+  );
 });
 test("Multi-sport profiles and mandatory guardian consent / junior privacy", async () => {
   assert.equal(
@@ -537,6 +566,42 @@ test("Round robin schedules every pair once and awards only once after completio
       )
     ).rows[0].n,
     3,
+  );
+});
+test("Withdrawal before a draw and re-entry cannot create duplicate participation awards", async () => {
+  const e = await event({}, { fee: 0, best_of: 1 });
+  await eventStatus(db, admin, e.id, "published");
+  const old = await entry(e.category.id, 6);
+  await withdraw(db, people[6], old.id);
+  assert.equal(
+    (
+      await request(
+        "/admin/entries/" + old.id + "/withdrawal",
+        "admin",
+        "POST",
+        { reason: "Test withdrawal", refund: false },
+      )
+    ).status,
+    200,
+  );
+  await entry(e.category.id, 6);
+  await entry(e.category.id, 7);
+  const ms = await draw(db, admin, e.category.id);
+  const m = ms[0];
+  await recordResult(db, admin, m.id, {
+    winner_id: m.entry_a,
+    sets: [[21, 15]],
+    outcome: "played",
+    version: m.version,
+  });
+  assert.equal(
+    (
+      await db.query(
+        "SELECT count(*)::int n FROM awards WHERE category_id=$1",
+        [e.category.id],
+      )
+    ).rows[0].n,
+    2,
   );
 });
 test("Withdrawals and cancellation create pending refund tasks and audit records", async () => {

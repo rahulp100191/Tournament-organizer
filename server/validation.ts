@@ -40,7 +40,7 @@ export const profileInput = z
     guardian_relationship: optional,
     consent: z.boolean().default(false),
     is_public: z.boolean().default(false),
-    photo_url: z.string().max(1000).optional(),
+    photo_url: z.string().max(1000).nullable().optional(),
     academy: optional,
     coach: optional,
     goal: optional,
