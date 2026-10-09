@@ -1,0 +1,11 @@
+node_modules/
+dist/
+test-results/
+*.log
+.tools/
+preview/
+*.zip
+*.docx
+.vercel/
+.env
+.env.*

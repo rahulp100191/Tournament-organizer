@@ -1,0 +1,10 @@
+import fs from 'node:fs/promises';
+let text=await fs.readFile('src/main.jsx','utf8');
+text=text.replace("const me={...athletes[0],...state.profile,points:athletes[0].points+state.points};","const me={...athletes[0],...state.profile,points:athletes[0].points+state.points};\nme.rank=1+athletes.filter(a=>a.id!=='a1'&&a.sport===me.sport&&a.city===me.city&&a.points>me.points).length;");
+text=text.replace('<strong>#3 <small>↑ 2</small></strong>','<strong>#{me.rank} <small>↑ {3-me.rank+2}</small></strong>');
+text=text.replace("athletes.filter(a=>a.sport==='Badminton').sort((a,b)=>b.points-a.points).slice(0,3)","athletes.map(a=>a.id==='a1'?me:a).filter(a=>a.sport==='Badminton').sort((a,b)=>b.points-a.points).slice(0,3)");
+text=text.replace("onClick={()=>notify('Demo reminder added to your local notifications')}","onClick={()=>{update(s=>({notifications:['Match reminder: 24 Oct, 10:30 AM · Court 02',...s.notifications]}));notify('Demo match reminder saved locally')}}");
+text=text.replace("update(s=>({results:[...s.results,{id:Date.now(),event:f.event,outcome:f.outcome,score:f.score,points:pts}],points:s.points+pts,notifications:","update(s=>({results:[...s.results.filter(r=>r.event!==f.event),{id:Date.now(),event:f.event,outcome:f.outcome,score:f.score,points:pts}],points:s.results.filter(r=>r.event!==f.event).reduce((n,r)=>n+r.points,0)+pts,notifications:");
+await fs.writeFile('src/main.jsx',text);
+const r=await fetch('https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?auto=format&fit=crop&w=1200&q=85');
+if(r.ok)await fs.writeFile('public/images/badminton.jpg',Buffer.from(await r.arrayBuffer()));

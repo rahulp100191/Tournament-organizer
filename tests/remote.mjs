@@ -1,0 +1,15 @@
+import {chromium} from '@playwright/test';
+import assert from 'node:assert/strict';
+const url=process.argv[2];
+const browser=await chromium.launch();
+const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+const response=await page.goto(url,{waitUntil:'networkidle'});
+assert.equal(response.status(),200);
+await page.getByRole('heading',{name:/Good morning/}).waitFor();
+assert(await page.evaluate(()=>window.isSecureContext),'HTTPS secure context');
+await page.evaluate(async()=>{await navigator.serviceWorker.ready});
+const info=await page.evaluate(async()=>{const r=await navigator.serviceWorker.getRegistration();return {active:!!r.active,images:[...document.images].every(i=>i.complete&&i.naturalWidth>0)}});
+assert.equal(info.active,true);assert.equal(info.images,true);
+await page.screenshot({path:'preview/phone-live.png'});
+console.log('PASS: public HTTPS preview returns 200, mobile UI renders, images load, secure context, active installable-app service worker.');
+await browser.close();
