@@ -137,6 +137,7 @@ const vite = await createServer({
   },
 });
 await vite.listen();
+console.log("Fixture and Vite ready",(await fetch("http://127.0.0.1:5175")).status);
 const browser = await chromium.launch();
 await mkdir("preview/real-app", { recursive: true });
 const errors: string[] = [];
@@ -147,7 +148,7 @@ try {
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("http://localhost:5175", { waitUntil: "domcontentloaded" });
+  await page.goto("http://127.0.0.1:5175", { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Rally Guwahati Open" }).waitFor();
   assert.equal(await page.getByText("Preview ready").count(), 0);
   await page.screenshot({
@@ -162,7 +163,7 @@ try {
     path: "preview/real-app/event-desktop.png",
     fullPage: true,
   });
-  await page.goto("http://localhost:5175/tests/ui.html", {
+  await page.goto("http://127.0.0.1:5175/tests/ui.html", {
     waitUntil: "domcontentloaded",
   });
   await page.getByRole("heading", { name: "My Rally" }).waitFor();
@@ -180,9 +181,9 @@ try {
     fullPage: true,
   });
   await context.addCookies([
-    { name: "persona", value: "admin", domain: "localhost", path: "/" },
+    { name: "persona", value: "admin", domain: "127.0.0.1", path: "/" },
   ]);
-  await page.goto("http://localhost:5175/tests/ui.html?role=admin", {
+  await page.goto("http://127.0.0.1:5175/tests/ui.html?role=admin", {
     waitUntil: "domcontentloaded",
   });
   await page.getByRole("heading", { name: "Tournament operations" }).waitFor();
@@ -214,7 +215,7 @@ try {
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("http://localhost:5175", { waitUntil: "domcontentloaded" });
+  await page.goto("http://127.0.0.1:5175", { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Rally Guwahati Open" }).waitFor();
   assert.ok(
     await page.evaluate(
@@ -226,9 +227,9 @@ try {
     fullPage: true,
   });
   await context.addCookies([
-    { name: "persona", value: "athlete", domain: "localhost", path: "/" },
+    { name: "persona", value: "athlete", domain: "127.0.0.1", path: "/" },
   ]);
-  await page.goto("http://localhost:5175/tests/ui.html", {
+  await page.goto("http://127.0.0.1:5175/tests/ui.html", {
     waitUntil: "domcontentloaded",
   });
   await page.getByRole("heading", { name: "My Rally" }).waitFor();
