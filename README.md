@@ -1,67 +1,43 @@
-# Rally grassroots sports demo
+# Rally tournament platform
 
-A responsive, installable web app built from `Grassroots_Sports_Platform_Master_Vision.docx`. No login, backend, payment gateway or personal data is needed. All athletes, competitions, rankings and transactions are fictional sample data.
+The `real-app` branch contains the athlete/admin platform. The original demo stays on `main` at https://rally-grassroots-demo.vercel.app. Deploy this branch only to **rally-tournaments-test**. No Cloudflare services or tunnels are used.
 
-Deploy this repository to Vercel using the included `vercel.json`: framework Vite, build command `npm run build`, output directory `dist`. No environment variables are required. Use the resulting HTTPS address to preview and install on phones.
+React/Vite PWA + Vercel TypeScript API + Neon PostgreSQL + Firebase verified Google/email authentication + public/private Vercel Blob storage. Business data never uses browser localStorage. Unconfigured deployments show clearly labelled, read-only design samples.
 
-## Run and preview
-
-```powershell
-npm install
-npm run build
-npm run preview
-```
-
-Open http://localhost:4173 on this computer. For an editable development server, use `npm run dev` (port 5173).
-
-## Install on Android and iPhone
-
-Use the deployed HTTPS demo address. Preview the app before installing.
-
-- Android: open in Chrome → menu → Install app / Add to Home screen.
-- iPhone: open in Safari → Share → Add to Home Screen → Add. Keep “Open as Web App” enabled if offered.
-- The sidebar’s “Get the app” button repeats these instructions and shows a native browser install prompt when available.
-
-This is a home-screen installed PWA, not an APK, IPA or store release. Local network HTTP can preview the UI but does not support secure PWA installation. After an initial online visit and service-worker activation, application files and demo data work offline. Fonts have system fallbacks. Demo edits are stored in this browser and do not sync between devices. The installed app can use a separate storage context, depending on platform.
-
-## Demo walkthrough
-
-1. Discover → choose a tournament → accept demo rules → simulate payment → confirmation → My events.
-2. Rankings → sport/city/category filters → athlete passport → sample stats, achievements, story and SVG certificate.
-3. Organizer → approve a participant → generate sample draw → schedule preview → record a result → updated rankings and history. Publishing again for the same event replaces the placement award instead of duplicating points.
-4. Organizer → create a tournament → find it in Discover. Export an event CSV report or publish a local announcement.
-5. Community → follow athletes, react to stories, open sample interviews and media storyboards.
-6. Explore as Parent → Athlete passport shows the fictional junior athlete Ananya. Junior contact is disabled.
-7. Rising athletes / Academies → explore athlete and academy records. Visibility consent is simulated locally.
-8. Leagues → sample circuit, promotion/relegation explanation, waitlist and sponsor report.
-9. Marketplace → simulate a court, coaching or merchandise booking.
-10. Admin → ranking awards for future results, sample dispute resolution and demo reset.
-
-Use “Explore as” to demonstrate athlete, visitor, parent, organizer, coach/scout, academy, sponsor and admin perspectives. There are no authentication or authorization boundaries in this presentation demo.
-
-## Scope and fidelity
-
-The main athlete and organizer loop is interactive. Fixture times, draws, ranking trend bars, ratings, academy metrics and sponsor reports are illustrative. Draw generation reveals a fixed seeded sample draw; it is not a sport-specific tournament engine. Format choices demonstrate the future organizer UI, rather than implementing each bracket algorithm. Registration categories, rules and locations are sample data. Real eligibility checks, payment/refund processing, verification, age consent, moderation, contacts, media hosting, live scoring, advanced analytics, national ranking rules and AI modules require production services.
-
-The document’s strategic recommendations are reference material. The user's request controls this build: skip login and show the broader vision with dummy data, including roadmap previews that the document excludes from its initial MVP.
-
-## Verification
+## Run
 
 ```powershell
-npx playwright install chromium
-npm run preview
-# In another terminal:
-npm test
+npm ci
+Copy-Item .env.example .env
+# Configure ignored .env securely.
+npm run db:migrate
+npm run dev:api
+# Another terminal:
+npm run dev
 ```
 
-Tests cover registration, persistence, remaining spots, approval, draw display, publishing points, leaderboard display, tournament creation, profile editing, bookings, offline reload, mobile navigation, horizontal overflow, manifest metadata and browser errors. These use desktop Chromium and a phone-size Chromium viewport; physical Android/iPhone installation remains a device check.
+Open http://localhost:5173. `npm run build` typechecks/builds the PWA; `npm test` runs PostgreSQL-compatible integration tests without credentials; `npm run test:browser` verifies actual screens/API/database together and captures `preview/real-app/`. Identity injection exists only in the local test process. The test UI harness is never included in a production build.
 
-Screenshots are in `preview/`. Static deployment files are in `dist/`. Runtime code is in `src/`.
+## Implemented flows
 
-## Assets
+Athletes browse published events anonymously, filter sport/location/date/category/level/fee, sign in, manage adult/junior multi-sport profiles, submit official ranking claims, choose an eligible category and reserve a slot. Doubles requires partner acceptance; one team has one payment and one slot. TEST payments remain pending until admin review. My Rally shows entries, partner invitations, corrections, withdrawals, refunds, notifications, history, certificates and disputes.
 
-Sample sports photos from Unsplash; pickleball court illustration and Rally icon created for this demo. UI uses Lucide icons, DM Sans and Manrope with local system fallbacks. Photo IDs are recorded in `scripts/assets.mjs` (badminton replacement: `photo-1626224583764-f87db24ac4ea`).
+Admin drafts/publishes/closes/cancels events, configures categories and eligibility, reviews payments/rankings/consent, handles refunds/withdrawals, exports reports, publishes seeded knockout or round-robin draws, schedules courts/times, records/corrects results and resolves disputes. Every decision has an audit record.
 
-## Build validation
+## Data guarantees
 
-Production build, browser-flow tests and dependency audit were run during delivery. No real service credentials are required by this app.
+Category row locks serialize reservation/payment/draw/result operations. Unpaid holds expire after 30 minutes bounded by deadlines; submitted payments retain their slot until review. Late claims never bypass capacity. Unique idempotency keys, references/fingerprints and one-open-payment constraints protect retries. Result corrections replace awards transactionally.
+
+DOB, phone, guardian details and evidence stay private; juniors cannot opt into public visibility. Adults can opt into public names/results. Evidence and avatars use private Blob storage, authenticated owner/admin streaming and no-store responses. Image metadata is stripped; size/type/pixel limits apply. Only public browsing assets and API responses are cached. Mutations require connectivity. Verified tokens and ownership are checked on every protected request; clients cannot choose admin roles. Account deletion removes evidence, scrubs personal data and deletes Firebase sign-in while preserving anonymised competition records and duplicate-reference fingerprints. Active entries must be withdrawn first; incomplete sign-in deletion can be retried.
+
+## Backup
+
+`npm run db:backup -- export private.rally-backup.json` exports a consistent snapshot. Set DATABASE_URL to a different empty migrated database before `npm run db:backup -- restore private.rally-backup.json`. Restore refuses nonempty databases and restores bracket links transactionally. Files contain private data: encrypt and keep outside Git. Upload references are exported, not Blob bytes; Firebase accounts require separate provider recovery.
+
+## Setup and delivery
+
+Follow [SETUP.md](SETUP.md), then [ANDROID.md](ANDROID.md). iPhone users install the PWA through Safari ? Share ? Add to Home Screen. Test payments never collect money. Free provider tiers have quotas, and appropriate hosting terms are needed before commercial operation.
+
+Local tests do not establish store readiness. Verify real Firebase verification/recovery/deletion, actual Neon concurrency, private Blob ownership, cross-device entries, quota monitoring, and physical phone installation/login/uploads/offline behavior after provider configuration. The operator must supply final legal/retention policies, identity/support contact, Play account, signing ownership and eligible testers.
+
+Deliberate limits: manual bank reconciliation, in-app notifications, SVG certificates (downloaded copies cannot be revoked), deterministic entry-ID tiebreak after round-robin wins/set difference/point difference. Eligibility/categories/fees cannot be rewritten after entries exist; use announcements/schedule changes/cancellation. No real gateway, SMS OTP, push delivery, native iOS release, marketplace, scouts, sponsors, video or social feeds. The vision document is reference material; the approved tournament plan controls this branch. Sports images and branding reuse the original demo assets.

@@ -9,3 +9,13 @@ preview/
 .vercel/
 .env
 .env.*
+
+!.env.example
+android/artifacts/
+android/app/build/
+android/.gradle/
+*.keystore
+*.jks
+
+*.rally-backup.json
+android/local.properties
