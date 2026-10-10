@@ -62,7 +62,7 @@ export function EventScreen({
       <div
         className="event-cover"
         style={{
-          backgroundImage: `linear-gradient(90deg,#143c2dee,#143c2d40),url(${event.poster_url || "/images/badminton.jpg"})`,
+          backgroundImage: `linear-gradient(90deg,#143c2dee,#143c2d40),url(${event.poster_url || "/images/tournament.svg"})`,
         }}
       >
         <span className="pill">
@@ -79,6 +79,9 @@ export function EventScreen({
       <div className="real-two">
         <section className="panel">
           <h2>Everything before you enter</h2>
+          {event.details?.description && (
+            <p className="preserve">{event.details.description}</p>
+          )}
           <div className="detail-grid">
             <div>
               <strong>Entries close</strong>
@@ -97,21 +100,60 @@ export function EventScreen({
               <small>{event.venue}</small>
             </div>
           </div>
+          {event.details?.address && <p>{event.details.address}</p>}
+          {event.details?.map_url && (
+            <a
+              href={event.details.map_url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open venue map
+            </a>
+          )}
+          {event.details?.organizer_name && (
+            <div className="rules-box">
+              <strong>Organised by {event.details.organizer_name}</strong>
+              <p>
+                Contact: {event.details.contact_phone} ·{" "}
+                {event.details.contact_email}
+              </p>
+            </div>
+          )}
+          {event.details?.equipment && (
+            <>
+              <h3>Before you arrive</h3>
+              <p className="preserve">{event.details.equipment}</p>
+            </>
+          )}
           <h3>Categories & eligibility</h3>
           {event.categories.map((c: any) => (
             <div className="category-line" key={c.id}>
               <strong>{c.name}</strong>
               <p>
-                {c.entry_type} · {c.format.replace("_", " ")} · best of{" "}
-                {c.best_of}
+                {c.entry_type === "singles"
+                  ? "Individual / singles"
+                  : c.entry_type}{" "}
+                · {c.format.replace("_", " ")} ·{" "}
+                {c.scoring_mode === "score"
+                  ? "Final score"
+                  : `Best of ${c.best_of}`}
               </p>
               <p>
                 Ages {c.min_age}–{c.max_age} · {c.gender} ·{" "}
                 {c.levels.join(", ")}
               </p>
+              {c.entry_type === "team" && c.gender === "mixed" && (
+                <p>Mixed roster: at least one male and one female player.</p>
+              )}
               <p>
+                {c.entry_type === "team" && (
+                  <>
+                    Roster: {c.team_min}–{c.team_max} players including
+                    substitutes ·{" "}
+                  </>
+                )}
                 {c.remaining} of {c.capacity}{" "}
-                {c.entry_type === "doubles" ? "team" : "entry"} slots available
+                {c.entry_type !== "singles" ? "team" : "entry"} slots available
                 · {money(c.fee)}
               </p>
               {c.school_required && (
@@ -149,6 +191,11 @@ export function EventScreen({
                 Sign in to register
               </button>
             </>
+          ) : me.account.role === "admin" ? (
+            <p>
+              Admin manages this tournament. Athletes register using their own
+              accounts and profiles.
+            </p>
           ) : !me.profiles.length ? (
             <>
               <p>Create an athlete profile before entering.</p>
@@ -171,6 +218,12 @@ export function EventScreen({
                     school: f.get("school") || "",
                     accepted_rules: true,
                     idempotency_key: crypto.randomUUID(),
+                    ...(category?.entry_type === "team"
+                      ? {
+                          team_name: f.get("team_name"),
+                          roster_size: Number(f.get("roster_size")),
+                        }
+                      : {}),
                   });
                   onRegistered();
                 } catch (e) {
@@ -204,6 +257,36 @@ export function EventScreen({
                   ))}
                 </select>
               </label>
+              {category?.entry_type === "team" && (
+                <>
+                  <label className="field">
+                    Team name (public)
+                    <input
+                      name="team_name"
+                      required
+                      minLength={2}
+                      maxLength={100}
+                    />
+                  </label>
+                  <label className="field">
+                    Total roster size including captain and substitutes
+                    <input
+                      name="roster_size"
+                      type="number"
+                      required
+                      min={category.team_min}
+                      max={category.team_max}
+                      defaultValue={category.team_min}
+                      key={cat}
+                    />
+                  </label>
+                  <p>
+                    You are the captain. Invite each teammate or guardian to
+                    accept with their own eligible profile. The complete roster
+                    uses one team slot and one payment.
+                  </p>
+                </>
+              )}
               <label className="field">
                 Emergency contact name and phone
                 <input name="emergency" required maxLength={200} />
@@ -215,9 +298,11 @@ export function EventScreen({
                 </label>
               )}
               <div className="rules-box">
-                {category?.entry_type === "doubles"
-                  ? "Create your entry, then share the partner link. Both athletes must accept before payment. One team uses one slot and one payment."
-                  : "A slot is held for 30 minutes, bounded by the entry deadline. Payment remains pending until admin review."}
+                {category?.entry_type === "team"
+                  ? "Payment opens after the full roster accepts. Joining an invitation does not reserve a slot until the roster is complete."
+                  : category?.entry_type === "doubles"
+                    ? "Create your entry, then share the partner link. Both athletes must accept before payment. One team uses one slot and one payment."
+                    : "A slot is held for 30 minutes, bounded by the entry deadline. Payment remains pending until admin review."}
               </div>
               <label className="check-label">
                 <input type="checkbox" required />I accept eligibility rules,
@@ -237,9 +322,11 @@ export function EventScreen({
                 >
                   {busy
                     ? "Checking eligibility…"
-                    : category?.entry_type === "doubles"
-                      ? "Create partner invitation"
-                      : "Reserve entry"}
+                    : category?.entry_type === "team"
+                      ? "Create team & invite players"
+                      : category?.entry_type === "doubles"
+                        ? "Create partner invitation"
+                        : "Reserve entry"}
                 </button>
               </div>
             </form>
@@ -302,8 +389,10 @@ export function EventScreen({
               standings
             </h3>
             <p>
-              Order: wins, set difference, point difference, then entry ID for
-              exact ties.
+              {event.categories.find((c: any) => c.id === category)
+                ?.scoring_mode === "score"
+                ? "Order: league points, score difference, then entry ID for exact ties."
+                : "Order: wins, set difference, point difference, then entry ID for exact ties."}
             </p>
             <table>
               <thead>
@@ -311,15 +400,19 @@ export function EventScreen({
                   <th>Entry</th>
                   <th>Wins</th>
                   <th>Losses</th>
+                  <th>Draws</th>
+                  <th>League points</th>
                   <th>Set difference</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.entry_id}>
-                    <td>{r.entry_id.slice(0, 8)}</td>
+                    <td>{r.label || r.entry_id.slice(0, 8)}</td>
                     <td>{r.wins}</td>
                     <td>{r.losses}</td>
+                    <td>{r.draws}</td>
+                    <td>{r.table_points}</td>
                     <td>{r.set_difference}</td>
                   </tr>
                 ))}

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, levels, sports, upload } from "./api";
+import { SportInput } from "./SportInput";
 import { PrivatePhoto } from "./PrivatePhoto";
 export function ProfileForm({
   profile,
@@ -38,7 +39,7 @@ export function ProfileForm({
               level: "Amateur",
               years: 0,
               primary_sport: true,
-              categories: ["singles", "doubles"],
+              categories: ["singles", "doubles", "team"],
               rankings: [],
             },
           ],
@@ -76,7 +77,8 @@ export function ProfileForm({
       <h2>{profile ? "Edit athlete" : "Create athlete profile"}</h2>
       <p>
         Contact details and date of birth stay private. Official ranking claims
-        require admin verification.
+        are self-reported. Only you or the athlete’s guardian maintain this
+        profile.
       </p>
       <label className="field">
         Profile type
@@ -166,17 +168,10 @@ export function ProfileForm({
         <fieldset key={i}>
           <legend>{s.sport}</legend>
           <div className="form-grid">
-            <label className="field">
-              Sport
-              <select
-                value={s.sport}
-                onChange={(e) => changeSport(i, "sport", e.target.value)}
-              >
-                {sports.map((v) => (
-                  <option key={v}>{v}</option>
-                ))}
-              </select>
-            </label>
+            <SportInput
+              value={s.sport}
+              onChange={(value) => changeSport(i, "sport", value)}
+            />
             <label className="field">
               Playing level
               <select
@@ -219,7 +214,7 @@ export function ProfileForm({
             Primary sport
           </label>
           <div className="actions">
-            {["singles", "doubles"].map((v) => (
+            {["singles", "doubles", "team"].map((v) => (
               <label className="check-label" key={v}>
                 <input
                   type="checkbox"
@@ -369,7 +364,7 @@ export function ProfileForm({
           )}
         </fieldset>
       ))}
-      {p.sports.length < 3 && (
+      {p.sports.length < 20 && (
         <button
           className="button secondary"
           type="button"
@@ -383,7 +378,7 @@ export function ProfileForm({
                 level: "Amateur",
                 years: 0,
                 primary_sport: false,
-                categories: ["singles", "doubles"],
+                categories: ["singles", "doubles", "team"],
                 rankings: [],
               },
             ])

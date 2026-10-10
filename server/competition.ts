@@ -162,7 +162,21 @@ export async function draw(
     ).rows;
   });
 }
-function scoreValid(s: any, m: any, bestOf: number) {
+function scoreValid(s: any, m: any, bestOf: number, category: any) {
+  if (s.outcome === "draw") {
+    if (
+      category.format !== "round_robin" ||
+      category.scoring_mode !== "score" ||
+      s.winner_id !== null ||
+      s.sets.length !== 1 ||
+      s.sets[0][0] !== s.sets[0][1]
+    )
+      fail(
+        400,
+        "Draws require a tied final score in a round-robin category, with no winner.",
+      );
+    return;
+  }
   if (s.outcome === "double_withdrawal") {
     if (s.winner_id !== null)
       fail(400, "Double withdrawal cannot declare a winner.");
@@ -192,9 +206,14 @@ function scoreValid(s: any, m: any, bestOf: number) {
     fail(400, "Set scores do not match the declared winner.");
 }
 export async function standings(tx: Sql, category: string) {
+  const c = await one(
+    tx,
+    "SELECT scoring_mode,league_points FROM categories WHERE id=$1",
+    [category],
+  );
   const entries = (
     await tx.query(
-      `SELECT id FROM entries WHERE id IN (SELECT entry_a FROM matches WHERE category_id=$1 UNION SELECT entry_b FROM matches WHERE category_id=$1) ORDER BY created_at,id`,
+      `SELECT id,team_name FROM entries WHERE id IN (SELECT entry_a FROM matches WHERE category_id=$1 UNION SELECT entry_b FROM matches WHERE category_id=$1) ORDER BY created_at,id`,
       [category],
     )
   ).rows;
@@ -203,8 +222,11 @@ export async function standings(tx: Sql, category: string) {
       r.id,
       {
         entry_id: r.id,
+        label: r.team_name || "Entry " + r.id.slice(0, 8),
         wins: 0,
         losses: 0,
+        draws: 0,
+        table_points: 0,
         set_difference: 0,
         point_difference: 0,
       },
@@ -217,12 +239,19 @@ export async function standings(tx: Sql, category: string) {
     )
   ).rows;
   for (const m of matches) {
-    if (!m.winner_id) continue;
+    const tied = m.score?.outcome === "draw";
+    if (!m.winner_id && !tied) continue;
     for (const id of [m.entry_a, m.entry_b]) {
       const r = table.get(id);
       if (!r) continue;
       r.wins += Number(m.winner_id === id);
-      r.losses += Number(m.winner_id !== id);
+      r.losses += Number(!tied && m.winner_id !== id);
+      r.draws += Number(tied);
+      r.table_points += tied
+        ? c.league_points.draw
+        : m.winner_id === id
+          ? c.league_points.win
+          : c.league_points.loss;
       for (const [a, b] of m.score?.sets || []) {
         const d = id === m.entry_a ? a - b : b - a;
         r.point_difference += d;
@@ -232,8 +261,10 @@ export async function standings(tx: Sql, category: string) {
   }
   return [...table.values()].sort(
     (a, b) =>
-      b.wins - a.wins ||
-      b.set_difference - a.set_difference ||
+      (c.scoring_mode === "score"
+        ? b.table_points - a.table_points
+        : b.wins - a.wins) ||
+      (c.scoring_mode === "score" ? 0 : b.set_difference - a.set_difference) ||
       b.point_difference - a.point_difference ||
       a.entry_id.localeCompare(b.entry_id),
   );
@@ -332,7 +363,7 @@ export async function recordResult(
       );
     if (m.status === "bye" || !m.entry_a || !m.entry_b)
       fail(409, "This match does not have two participants.");
-    scoreValid(s, m, c.best_of);
+    scoreValid(s, m, c.best_of, c);
     if (m.next_match && m.winner_id !== s.winner_id) {
       const next = await one(tx, "SELECT * FROM matches WHERE id=$1", [
         m.next_match,

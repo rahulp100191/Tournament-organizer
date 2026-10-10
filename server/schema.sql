@@ -27,3 +27,16 @@ CREATE INDEX IF NOT EXISTS account_notifications ON notifications(account_id,cre
 CREATE TABLE IF NOT EXISTS payment_references(reference_hash text PRIMARY KEY, payment_id uuid NOT NULL REFERENCES payments(id));
 CREATE TABLE IF NOT EXISTS payment_corrections(id uuid PRIMARY KEY, payment_id uuid NOT NULL REFERENCES payments(id), account_id uuid NOT NULL REFERENCES accounts(id), reason text NOT NULL, status text NOT NULL DEFAULT 'open', resolution text, created_at timestamptz NOT NULL DEFAULT now());
 CREATE UNIQUE INDEX IF NOT EXISTS one_open_correction ON payment_corrections(payment_id) WHERE status='open';
+
+-- Additive upgrades for existing databases.
+ALTER TABLE events DROP CONSTRAINT IF EXISTS events_sport_check;
+ALTER TABLE athlete_sports DROP CONSTRAINT IF EXISTS athlete_sports_sport_check;
+ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_entry_type_check;
+ALTER TABLE categories ADD CONSTRAINT categories_entry_type_check CHECK(entry_type IN ('singles','doubles','team'));
+ALTER TABLE events ADD COLUMN IF NOT EXISTS details jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS team_min integer NOT NULL DEFAULT 2 CHECK(team_min BETWEEN 2 AND 50);
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS team_max integer NOT NULL DEFAULT 2 CHECK(team_max BETWEEN 2 AND 50);
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS scoring_mode text NOT NULL DEFAULT 'sets' CHECK(scoring_mode IN ('sets','score'));
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS league_points jsonb NOT NULL DEFAULT '{"win":3,"draw":1,"loss":0}';
+ALTER TABLE entries ADD COLUMN IF NOT EXISTS team_name text;
+ALTER TABLE entries ADD COLUMN IF NOT EXISTS roster_size integer NOT NULL DEFAULT 1 CHECK(roster_size BETWEEN 1 AND 50);

@@ -168,7 +168,7 @@ export function createApp(options: Options = {}) {
       ]);
       return (
         await db.query(
-          `SELECT m.*,c.name category_name,c.format, (SELECT string_agg(CASE WHEN a.is_public AND a.kind='self' THEN a.name ELSE 'Player '||left(a.id::text,4) END,' / ' ORDER BY a.id) FROM entry_members em JOIN athletes a ON a.id=em.athlete_id WHERE em.entry_id=m.entry_a) label_a,(SELECT string_agg(CASE WHEN a.is_public AND a.kind='self' THEN a.name ELSE 'Player '||left(a.id::text,4) END,' / ' ORDER BY a.id) FROM entry_members em JOIN athletes a ON a.id=em.athlete_id WHERE em.entry_id=m.entry_b) label_b FROM matches m JOIN categories c ON c.id=m.category_id WHERE c.event_id=$1 AND c.draw_published ORDER BY c.name,round,position`,
+          `SELECT m.*,c.name category_name,c.format,c.scoring_mode, COALESCE((SELECT team_name FROM entries WHERE id=m.entry_a),(SELECT string_agg(CASE WHEN a.is_public AND a.kind='self' THEN a.name ELSE 'Player '||left(a.id::text,4) END,' / ' ORDER BY a.id) FROM entry_members em JOIN athletes a ON a.id=em.athlete_id WHERE em.entry_id=m.entry_a)) label_a,COALESCE((SELECT team_name FROM entries WHERE id=m.entry_b),(SELECT string_agg(CASE WHEN a.is_public AND a.kind='self' THEN a.name ELSE 'Player '||left(a.id::text,4) END,' / ' ORDER BY a.id) FROM entry_members em JOIN athletes a ON a.id=em.athlete_id WHERE em.entry_id=m.entry_b)) label_b FROM matches m JOIN categories c ON c.id=m.category_id WHERE c.event_id=$1 AND c.draw_published ORDER BY c.name,round,position`,
           [req.params.id],
         )
       ).rows;
@@ -258,6 +258,10 @@ export function createApp(options: Options = {}) {
   );
   app.delete(
     "/api/v1/me/profiles/:id",
+    (req, res, next) =>
+      account(req).role === "athlete"
+        ? next()
+        : next(new AppError(403, "Only athletes maintain profiles.")),
     endpoint(async (req) =>
       db.transaction(async (tx) => {
         const p = await owned(tx, account(req), uuid.parse(req.params.id));
@@ -372,7 +376,7 @@ export function createApp(options: Options = {}) {
         fail(404, "Invitation not found.");
       const en = await one(
         db,
-        `SELECT en.id,en.status,en.invite_expires_at,c.name category_name,c.gender,c.event_id,ev.name event_name,ev.sport FROM entries en JOIN categories c ON c.id=en.category_id JOIN events ev ON ev.id=c.event_id WHERE invite_token=$1`,
+        `SELECT en.id,en.status,en.team_name,en.roster_size,(SELECT count(*)::int FROM entry_members WHERE entry_id=en.id) accepted_members,en.invite_expires_at,c.name category_name,c.entry_type,c.gender,c.event_id,ev.name event_name,ev.sport FROM entries en JOIN categories c ON c.id=en.category_id JOIN events ev ON ev.id=c.event_id WHERE invite_token=$1`,
         [req.params.token],
       );
       return en;
@@ -635,11 +639,6 @@ export function createApp(options: Options = {}) {
           "SELECT id,action,entity_id,created_at FROM audit ORDER BY created_at DESC LIMIT 100",
         )
       ).rows,
-      claims: (
-        await db.query(
-          `SELECT a.id athlete_id,a.name,s.sport,s.rankings,COALESCE((SELECT jsonb_agg(r) FROM ranking_reviews r WHERE r.athlete_id=a.id AND r.sport=s.sport),'[]') reviews FROM athletes a JOIN athlete_sports s ON s.athlete_id=a.id WHERE jsonb_array_length(s.rankings)>0`,
-        )
-      ).rows,
     })),
   );
   app.post(
@@ -775,7 +774,7 @@ export function createApp(options: Options = {}) {
       async (req) =>
         (
           await db.query(
-            `SELECT m.*,c.name category_name,c.best_of,c.format,(SELECT string_agg(a.name,' / ' ORDER BY a.id) FROM entry_members em JOIN athletes a ON a.id=em.athlete_id WHERE em.entry_id=m.entry_a) label_a,(SELECT string_agg(a.name,' / ' ORDER BY a.id) FROM entry_members em JOIN athletes a ON a.id=em.athlete_id WHERE em.entry_id=m.entry_b) label_b FROM matches m JOIN categories c ON c.id=m.category_id WHERE c.event_id=$1 ORDER BY c.name,m.round,m.position`,
+            `SELECT m.*,c.name category_name,c.best_of,c.format,c.scoring_mode,COALESCE((SELECT team_name FROM entries WHERE id=m.entry_a),(SELECT string_agg(a.name,' / ' ORDER BY a.id) FROM entry_members em JOIN athletes a ON a.id=em.athlete_id WHERE em.entry_id=m.entry_a)) label_a,COALESCE((SELECT team_name FROM entries WHERE id=m.entry_b),(SELECT string_agg(a.name,' / ' ORDER BY a.id) FROM entry_members em JOIN athletes a ON a.id=em.athlete_id WHERE em.entry_id=m.entry_b)) label_b FROM matches m JOIN categories c ON c.id=m.category_id WHERE c.event_id=$1 ORDER BY c.name,m.round,m.position`,
             [uuid.parse(req.params.id)],
           )
         ).rows,
@@ -870,54 +869,12 @@ export function createApp(options: Options = {}) {
       return { resolved: true };
     }),
   );
-  app.post(
-    "/api/v1/admin/rankings/review",
-    endpoint(async (req) => {
-      const p = z
-        .object({
-          athlete_id: uuid,
-          sport: z.string(),
-          scope: z.enum(["state", "national"]),
-          status: z.enum(["verified", "rejected"]),
-          reason,
-        })
-        .parse(req.body);
-      const s = await one(
-        db,
-        "SELECT rankings FROM athlete_sports WHERE athlete_id=$1 AND sport=$2",
-        [p.athlete_id, p.sport],
-      );
-      const claim = s.rankings.find((r: any) => r.scope === p.scope);
-      if (!claim) fail(404, "Ranking claim not found.");
-      await db.transaction(async (tx) => {
-        await tx.query(
-          `INSERT INTO ranking_reviews(id,athlete_id,sport,scope,status,source_snapshot,reason,admin_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(athlete_id,sport,scope) DO UPDATE SET status=excluded.status,source_snapshot=excluded.source_snapshot,reason=excluded.reason,admin_id=excluded.admin_id,created_at=now()`,
-          [
-            randomUUID(),
-            p.athlete_id,
-            p.sport,
-            p.scope,
-            p.status,
-            JSON.stringify(claim),
-            p.reason,
-            account(req).id,
-          ],
-        );
-        await audit(tx, account(req), "ranking.reviewed", p.athlete_id, {
-          sport: p.sport,
-          scope: p.scope,
-          status: p.status,
-        });
-      });
-      return { reviewed: true };
-    }),
-  );
   app.get(
     "/api/v1/admin/events/:id/export",
     endpoint(async (req, res) => {
       const rows = (
         await db.query(
-          `SELECT en.id,c.name category,en.status,en.fee fee_paise,(SELECT string_agg(a.name,' / ') FROM entry_members m JOIN athletes a ON a.id=m.athlete_id WHERE m.entry_id=en.id) athletes,p.reference,p.status payment_status FROM entries en JOIN categories c ON c.id=en.category_id LEFT JOIN payments p ON p.entry_id=en.id WHERE c.event_id=$1 ORDER BY en.created_at`,
+          `SELECT en.id,en.team_name,c.name category,en.status,en.fee fee_paise,(SELECT string_agg(a.name,' / ') FROM entry_members m JOIN athletes a ON a.id=m.athlete_id WHERE m.entry_id=en.id) athletes,p.reference,p.status payment_status FROM entries en JOIN categories c ON c.id=en.category_id LEFT JOIN payments p ON p.entry_id=en.id WHERE c.event_id=$1 ORDER BY en.created_at`,
           [uuid.parse(req.params.id)],
         )
       ).rows;
@@ -960,6 +917,8 @@ export function createApp(options: Options = {}) {
         .parse(req.body);
       if (p.purpose === "poster" && a.role !== "admin")
         fail(403, "Only admin can upload posters.");
+      if (p.purpose === "avatar" && a.role !== "athlete")
+        fail(403, "Only athletes can upload profile photos.");
       const bytes = Buffer.from(p.base64, "base64");
       if (bytes.length > 2 * 1024 * 1024 || bytes.length < 10)
         fail(400, "Upload an image smaller than 2 MB.");

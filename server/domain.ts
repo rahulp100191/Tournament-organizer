@@ -76,6 +76,8 @@ export async function saveProfile(
   input: any,
   id?: string,
 ) {
+  if (a.role !== "athlete")
+    fail(403, "Athlete profiles are created and maintained by athletes only.");
   const p = profileInput.parse(input);
   const today = new Date().toISOString().slice(0, 10);
   const age = ageAt(p.dob, today);
@@ -160,6 +162,7 @@ export async function saveEvent(
   input: any,
   id?: string,
 ) {
+  if (a.role !== "admin") fail(403, "Only Admin can create tournaments.");
   const e = eventInput.parse(input);
   return db.transaction(async (tx) => {
     if (id) {
@@ -179,7 +182,7 @@ export async function saveEvent(
     }
     const eid = id || randomUUID();
     await tx.query(
-      `INSERT INTO events(id,name,sport,city,state,venue,starts_at,ends_at,registration_deadline,age_cutoff,withdrawal_deadline,refund_policy,rules,poster_url,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT(id) DO UPDATE SET name=excluded.name,sport=excluded.sport,city=excluded.city,state=excluded.state,venue=excluded.venue,starts_at=excluded.starts_at,ends_at=excluded.ends_at,registration_deadline=excluded.registration_deadline,age_cutoff=excluded.age_cutoff,withdrawal_deadline=excluded.withdrawal_deadline,refund_policy=excluded.refund_policy,rules=excluded.rules,poster_url=excluded.poster_url`,
+      `INSERT INTO events(id,name,sport,city,state,venue,starts_at,ends_at,registration_deadline,age_cutoff,withdrawal_deadline,refund_policy,rules,poster_url,created_by,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT(id) DO UPDATE SET name=excluded.name,sport=excluded.sport,city=excluded.city,state=excluded.state,venue=excluded.venue,starts_at=excluded.starts_at,ends_at=excluded.ends_at,registration_deadline=excluded.registration_deadline,age_cutoff=excluded.age_cutoff,withdrawal_deadline=excluded.withdrawal_deadline,refund_policy=excluded.refund_policy,rules=excluded.rules,poster_url=excluded.poster_url,details=excluded.details`,
       [
         eid,
         e.name,
@@ -196,12 +199,13 @@ export async function saveEvent(
         e.rules,
         e.poster_url,
         a.id,
+        j(e.details),
       ],
     );
     await tx.query("DELETE FROM categories WHERE event_id=$1", [eid]);
     for (const c of e.categories)
       await tx.query(
-        "INSERT INTO categories(id,event_id,name,entry_type,format,capacity,fee,min_age,max_age,gender,levels,best_of,school_required,points) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+        "INSERT INTO categories(id,event_id,name,entry_type,format,capacity,fee,min_age,max_age,gender,levels,best_of,school_required,points,team_min,team_max,scoring_mode,league_points) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
         [
           randomUUID(),
           eid,
@@ -217,6 +221,10 @@ export async function saveEvent(
           c.best_of,
           c.school_required,
           j(c.points),
+          c.team_min,
+          c.team_max,
+          c.scoring_mode,
+          j(c.league_points),
         ],
       );
     await audit(tx, a, id ? "event.updated" : "event.created", eid);
@@ -275,6 +283,7 @@ const openEvent = (e: any) => {
     fail(409, "Registration is closed.");
 };
 export async function register(db: Database, a: Account, input: any) {
+  if (a.role !== "athlete") fail(403, "Use an Athlete account to register.");
   const p = entryInput.parse(input);
   return db.transaction(async (tx) => {
     const c = await one(tx, "SELECT * FROM categories WHERE id=$1 FOR UPDATE", [
@@ -291,11 +300,31 @@ export async function register(db: Database, a: Account, input: any) {
       fail(409, "Draw is published. Registration is closed for this category.");
     const athlete = await owned(tx, a, p.athlete_id);
     await eligibility(tx, c, e, athlete);
+    const team = c.entry_type === "team";
+    const target = team ? p.roster_size : c.entry_type === "doubles" ? 2 : 1;
+    if (
+      team &&
+      (!p.team_name || !target || target < c.team_min || target > c.team_max)
+    )
+      fail(
+        400,
+        `Provide a team name and roster size from ${c.team_min} to ${c.team_max}.`,
+      );
+    if (
+      team &&
+      (
+        await tx.query(
+          "SELECT 1 FROM entries WHERE category_id=$1 AND lower(team_name)=lower($2) AND status NOT IN ('expired','withdrawn','cancelled','payment_rejected')",
+          [c.id, p.team_name],
+        )
+      ).rows.length
+    )
+      fail(409, "This team name already has an active entry in this category.");
     if (c.school_required && !p.school)
       fail(400, "School or college details are required.");
     await capacity(tx, c);
     const id = randomUUID(),
-      doubles = c.entry_type === "doubles";
+      doubles = c.entry_type === "doubles" || team;
     const expires = new Date(
       Math.min(
         Date.now() + 30 * 60000,
@@ -330,6 +359,10 @@ export async function register(db: Database, a: Account, input: any) {
       "INSERT INTO entry_members(entry_id,athlete_id) VALUES($1,$2)",
       [id, athlete.id],
     );
+    await tx.query(
+      "UPDATE entries SET team_name=$2,roster_size=$3 WHERE id=$1",
+      [id, team ? p.team_name : null, target],
+    );
     if (!doubles && c.fee === 0)
       await tx.query(`UPDATE entries SET status='confirmed' WHERE id=$1`, [id]);
     await audit(tx, a, "entry.created", id);
@@ -342,6 +375,8 @@ export async function acceptPartner(
   token: string,
   athleteId: string,
 ) {
+  if (a.role !== "athlete")
+    fail(403, "Only athletes or their guardians can join a roster.");
   return db.transaction(async (tx) => {
     const en = await one(tx, "SELECT * FROM entries WHERE invite_token=$1", [
       token,
@@ -354,6 +389,8 @@ export async function acceptPartner(
       "SELECT * FROM entries WHERE id=$1 FOR UPDATE",
       [en.id],
     );
+    if (!["doubles", "team"].includes(c.entry_type))
+      fail(409, "This category does not accept invitations.");
     if (
       locked.status !== "partner_pending" ||
       new Date(locked.invite_expires_at).getTime() <= Date.now()
@@ -371,18 +408,59 @@ export async function acceptPartner(
       [en.id],
     );
     if (first.id === p.id) fail(400, "Choose a different partner.");
-    if (c.gender === "mixed" && new Set([first.gender, p.gender]).size !== 2)
+    if (
+      c.entry_type === "doubles" &&
+      c.gender === "mixed" &&
+      new Set([first.gender, p.gender]).size !== 2
+    )
       fail(400, "Mixed doubles requires one male and one female athlete.");
     if (
+      c.entry_type === "doubles" &&
       c.gender === "mixed" &&
       ![first.gender, p.gender].every((g) => ["male", "female"].includes(g))
     )
       fail(400, "Mixed doubles requires one male and one female athlete.");
-    await capacity(tx, c);
+    const count = (
+      await tx.query(
+        "SELECT count(*)::int n FROM entry_members WHERE entry_id=$1",
+        [en.id],
+      )
+    ).rows[0].n;
+    const target = c.entry_type === "team" ? locked.roster_size : 2;
+    if (count >= target) fail(409, "This roster is already complete.");
+    if (
+      c.entry_type === "team" &&
+      c.gender === "mixed" &&
+      count + 1 === target
+    ) {
+      const genders = (
+        await tx.query(
+          "SELECT a.gender FROM entry_members m JOIN athletes a ON a.id=m.athlete_id WHERE m.entry_id=$1",
+          [en.id],
+        )
+      ).rows
+        .map((row) => row.gender)
+        .concat(p.gender);
+      if (!genders.includes("male") || !genders.includes("female"))
+        fail(
+          400,
+          "Mixed teams require at least one male and one female athlete.",
+        );
+    }
+    if (count + 1 === target) await capacity(tx, c);
     await tx.query(
       "INSERT INTO entry_members(entry_id,athlete_id) VALUES($1,$2)",
       [en.id, p.id],
     );
+    if (count + 1 < target) {
+      await audit(tx, a, "team.member_accepted", en.id);
+      await tell(
+        tx,
+        en.id,
+        `A teammate joined ${locked.team_name}. ${count + 1} of ${target} players accepted.`,
+      );
+      return en.id;
+    }
     await tx.query(
       "UPDATE entries SET status=$2,reservation_expires_at=$3 WHERE id=$1",
       [
@@ -400,7 +478,9 @@ export async function acceptPartner(
     await tell(
       tx,
       en.id,
-      "Your doubles partner accepted. Your entry is ready.",
+      c.entry_type === "team"
+        ? "Your team roster is complete. Your entry is ready."
+        : "Your doubles partner accepted. Your entry is ready.",
     );
     return en.id;
   });
@@ -658,6 +738,21 @@ export async function eventStatus(
     };
     if (!allowed[e.status]?.includes(status))
       fail(409, "This event status transition is not allowed.");
+    if (status === "published") {
+      const d = e.details || {};
+      if (
+        !d.description ||
+        d.description.length < 10 ||
+        !d.organizer_name ||
+        !d.contact_phone ||
+        !d.contact_email ||
+        !d.address
+      )
+        fail(
+          400,
+          "Add a description, organiser name, phone, email and full venue address before publishing.",
+        );
+    }
     if (
       status === "published" &&
       new Date(e.registration_deadline).getTime() <= Date.now()

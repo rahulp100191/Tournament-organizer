@@ -21,7 +21,7 @@ const AthleteScreen = lazy(() =>
 const AdminScreen = lazy(() =>
   import("./AdminScreen").then((m) => ({ default: m.AdminScreen })),
 );
-const samples = sports.map((sport, i) => ({
+const samples = sports.slice(0, 3).map((sport, i) => ({
   id: "preview-" + i,
   name: [
     "Rally Open · Guwahati",
@@ -154,7 +154,9 @@ function App() {
   );
   const nav = [
     ["discover", "Discover", Compass],
-    ["athlete", "My Rally", UserRound],
+    ...(me?.account.role === "admin"
+      ? []
+      : [["athlete", "My Rally", UserRound]]),
     ["rankings", "Standings", Trophy],
     ["preview", "App preview", ShieldCheck],
     ...(me?.account.role === "admin" ? [["admin", "Admin", ShieldCheck]] : []),
@@ -188,7 +190,9 @@ function App() {
         <div className="sidebar-note">
           <Trophy />
           <strong>Find your next challenge.</strong>
-          <p>Three sports. A community of competitors. Your place on court.</p>
+          <p>
+            Every sport. A community of competitors. Find your next tournament.
+          </p>
         </div>
         <a
           href="https://rally-grassroots-demo.vercel.app"
@@ -269,7 +273,7 @@ function App() {
               </section>
             ) : (
               <Suspense fallback={<p>Loading your dashboard…</p>}>
-                {page === "admin" ? (
+                {page === "admin" || me.account.role === "admin" ? (
                   me.account.role === "admin" ? (
                     <AdminScreen />
                   ) : (
@@ -322,9 +326,24 @@ function App() {
             </>
           ) : page === "invite" ? (
             <section className="panel">
-              <h1>Join your doubles partner</h1>
+              <h1>
+                {invite?.team_name
+                  ? `Join ${invite.team_name}`
+                  : "Join your doubles partner"}
+              </h1>
+              {invite?.team_name && (
+                <p>
+                  {invite.accepted_members} of {invite.roster_size} players
+                  accepted. Each player joins with their own eligible profile.
+                </p>
+              )}
               {!user || !user.emailVerified ? (
                 <Login onDone={() => refresh()} />
+              ) : me?.account.role === "admin" ? (
+                <p>
+                  Team invitations are for Athlete accounts. Admin cannot create
+                  or maintain athlete profiles.
+                </p>
               ) : !me?.profiles.length ? (
                 <>
                   <p>Create your profile, then reopen this link.</p>
@@ -385,8 +404,16 @@ function App() {
                         View event
                       </button>
                     </label>
-                    <button className="button">
-                      Accept partner invitation
+                    <button
+                      className="button"
+                      disabled={
+                        invite.status !== "partner_pending" ||
+                        Date.parse(invite.invite_expires_at) <= Date.now()
+                      }
+                    >
+                      {invite.team_name
+                        ? "Accept team invitation"
+                        : "Accept partner invitation"}
                     </button>
                   </form>
                 </>
@@ -448,24 +475,26 @@ function App() {
                 </span>
               </section>
               <div className="sport-tabs" id="events">
-                {["All sports", ...sports].map((s) => (
-                  <button
-                    key={s}
-                    className={
-                      filters.sport === (s === "All sports" ? "" : s)
-                        ? "active"
-                        : ""
-                    }
-                    onClick={() =>
-                      setFilters({
-                        ...filters,
-                        sport: s === "All sports" ? "" : s,
-                      })
-                    }
-                  >
-                    {s}
-                  </button>
-                ))}
+                {["All sports", ...new Set(displayed.map((e) => e.sport))].map(
+                  (s) => (
+                    <button
+                      key={s}
+                      className={
+                        filters.sport === (s === "All sports" ? "" : s)
+                          ? "active"
+                          : ""
+                      }
+                      onClick={() =>
+                        setFilters({
+                          ...filters,
+                          sport: s === "All sports" ? "" : s,
+                        })
+                      }
+                    >
+                      {s}
+                    </button>
+                  ),
+                )}
               </div>
               <div className="real-filters">
                 <label>
@@ -490,6 +519,7 @@ function App() {
                     <option value="">All categories</option>
                     <option value="singles">Singles</option>
                     <option value="doubles">Doubles</option>
+                    <option value="team">Whole team</option>
                   </select>
                 </label>
                 <label>
@@ -558,11 +588,12 @@ function App() {
                             "/images/badminton.jpg",
                             "/images/tennis.jpg",
                             "/images/pickleball.jpg",
-                          ][sports.indexOf(e.sport)]
+                          ][sports.indexOf(e.sport)] ||
+                          "/images/tournament.svg"
                         }
                         alt={`${e.sport} tournament`}
                         onError={(ev) => {
-                          ev.currentTarget.src = "/images/badminton.jpg";
+                          ev.currentTarget.src = "/images/tournament.svg";
                         }}
                       />
                       <span className="image-tag">{e.status}</span>
@@ -707,7 +738,7 @@ function Policy({
             Rally collects account identifiers, athlete details, sport
             preferences, guardian consent and tournament contact information to
             organise entries and matches. Optional rankings are self-reported
-            until reviewed.
+            and are maintained by athletes.
           </p>
           <p>
             Exact birth dates, contact information, guardian details and payment

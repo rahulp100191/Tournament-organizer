@@ -68,7 +68,7 @@ export const date = (s: string) =>
         timeStyle: "short",
       })
     : "To be announced";
-export const sports = ["Badminton", "Tennis", "Pickleball"];
+export { sports } from "../shared/sports";
 export const levels = [
   "Beginner",
   "Amateur",

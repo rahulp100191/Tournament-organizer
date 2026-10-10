@@ -49,6 +49,14 @@ const pid = await saveProfile(db, athlete, {
   is_public: true,
   sports: [
     {
+      sport: "Futsal",
+      level: "Amateur",
+      years: 2,
+      primary_sport: false,
+      categories: ["team"],
+      rankings: [],
+    },
+    {
       sport: "Badminton",
       level: "Amateur",
       years: 5,
@@ -74,6 +82,13 @@ const eid = await saveEvent(db, admin, {
   city: "Guwahati",
   state: "Assam",
   venue: "Nehru Indoor Stadium",
+  details: {
+    description: "Community tournament for local athletes.",
+    organizer_name: "Rally Test Organiser",
+    contact_phone: "9999999999",
+    contact_email: "organiser@example.test",
+    address: "Nehru Indoor Stadium, Guwahati",
+  },
   starts_at: iso(7),
   ends_at: iso(8),
   registration_deadline: iso(5),
@@ -211,12 +226,116 @@ try {
     path: "preview/real-app/admin-payments.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Create event", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create tournament", exact: true })
+    .click();
   await page.getByRole("heading", { name: "Draft a tournament" }).waitFor();
+  await page
+    .getByLabel("Tournament name", { exact: true })
+    .fill("Browser Futsal Team Cup");
+  await page.getByLabel("City", { exact: true }).fill("Guwahati");
+  await page.getByLabel("State", { exact: true }).fill("Assam");
+  await page.getByLabel("Venue", { exact: true }).fill("Community Ground");
+  await page.getByLabel("Sport", { exact: true }).fill("Futsal");
+  for (const [label, days] of [
+    ["Starts", 7],
+    ["Ends", 8],
+    ["Registration deadline", 5],
+    ["Withdrawal deadline", 4],
+  ] as const)
+    await page.getByLabel(label, { exact: true }).fill(iso(days).slice(0, 16));
+  await page.getByLabel("Published age cutoff").fill(iso(7).slice(0, 10));
+  await page
+    .getByLabel("Tournament description")
+    .fill("A community competition with full team registration.");
+  await page
+    .getByLabel("Organiser / organisation")
+    .fill("Rally Test Organiser");
+  await page.getByLabel("Public organiser phone").fill("9999999999");
+  await page
+    .getByLabel("Public organiser email")
+    .fill("organiser@example.test");
+  await page
+    .getByLabel("Full venue address")
+    .fill("Community Ground, Guwahati");
+  await page
+    .getByLabel("Rules", { exact: true })
+    .fill(
+      "Five players on court. Resolve knockout ties using penalties. Bring shoes.",
+    );
+  await page
+    .getByLabel("Refund and withdrawal policy")
+    .fill("Full refund before the withdrawal deadline.");
+  await page.getByLabel("Entry type").selectOption("team");
+  await page.getByLabel("Category name", { exact: true }).fill("Open teams");
+  await page.getByLabel("Minimum roster size").fill("3");
+  await page.getByLabel("Maximum roster size").fill("5");
   await page.screenshot({
     path: "preview/real-app/admin-event-form.png",
     fullPage: true,
   });
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  const teamCard = page
+    .locator("section.panel")
+    .filter({
+      has: page.getByRole("heading", {
+        name: "Browser Futsal Team Cup",
+        exact: true,
+      }),
+    });
+  await teamCard
+    .getByRole("button", { name: "Publish", exact: true })
+    .waitFor();
+  const teamEvent = (
+    await db.query(
+      "SELECT id,status FROM events WHERE name='Browser Futsal Team Cup'",
+    )
+  ).rows[0];
+  assert.equal(teamEvent.status, "draft");
+  assert.ok(
+    !(
+      await (await fetch("http://127.0.0.1:3002/api/v1/events")).json()
+    ).data.some((event: any) => event.id === teamEvent.id),
+  );
+  await teamCard.getByRole("button", { name: "Publish", exact: true }).click();
+  await teamCard
+    .getByRole("button", { name: "Close entries", exact: true })
+    .waitFor();
+  assert.ok(
+    (
+      await (await fetch("http://127.0.0.1:3002/api/v1/events")).json()
+    ).data.some((event: any) => event.id === teamEvent.id),
+  );
+  await context.clearCookies();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("http://127.0.0.1:5175/tests/ui.html?event=" + teamEvent.id);
+  await page.getByLabel("Team name (public)").fill("Rally Browser Team");
+  await page
+    .getByLabel("Emergency contact name and phone")
+    .fill("Emergency 9999999999");
+  await page.getByRole("checkbox").check();
+  await page.screenshot({
+    path: "preview/real-app/team-registration-phone.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "Create team & invite players", exact: true })
+    .click();
+  await page
+    .getByText("Invite players to Rally Browser Team", { exact: true })
+    .waitFor();
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  await page.screenshot({
+    path: "preview/real-app/team-invitation-phone.png",
+    fullPage: true,
+  });
+  console.log(
+    "Browser admin creation → draft privacy → publish → public discovery → captain team registration → roster invitations passed.",
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("http://127.0.0.1:5175", { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Rally Guwahati Open" }).waitFor();

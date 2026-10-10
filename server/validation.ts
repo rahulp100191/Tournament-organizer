@@ -1,6 +1,13 @@
 import { z } from "zod";
+import { normalizeSport } from "../shared/sports.js";
 const text = z.string().trim().min(1).max(200);
-export const sport = z.enum(["Badminton", "Tennis", "Pickleball"]);
+export const sport = z
+  .string()
+  .trim()
+  .min(2)
+  .max(80)
+  .regex(/^[\p{L}\p{N}][\p{L}\p{N} &'().+-]*$/u, "Enter a sport name")
+  .transform(normalizeSport);
 export const levels = [
   "Beginner",
   "Amateur",
@@ -51,12 +58,12 @@ export const profileInput = z
           level: z.enum(levels),
           years: z.number().int().min(0).max(90),
           primary_sport: z.boolean(),
-          categories: z.array(z.enum(["singles", "doubles"])).min(1),
+          categories: z.array(z.enum(["singles", "doubles", "team"])).min(1),
           rankings: z.array(ranking).max(2).default([]),
         }),
       )
       .min(1)
-      .max(3),
+      .max(20),
   })
   .superRefine((p, c) => {
     if (p.sports.filter((s) => s.primary_sport).length !== 1)
@@ -84,7 +91,17 @@ export const profileInput = z
 export const categoryInput = z
   .object({
     name: text,
-    entry_type: z.enum(["singles", "doubles"]),
+    entry_type: z.enum(["singles", "doubles", "team"]),
+    team_min: z.number().int().min(2).max(50).default(2),
+    team_max: z.number().int().min(2).max(50).default(2),
+    scoring_mode: z.enum(["sets", "score"]).default("sets"),
+    league_points: z
+      .object({
+        win: z.number().int().min(0).max(100),
+        draw: z.number().int().min(0).max(100),
+        loss: z.number().int().min(0).max(100),
+      })
+      .default({ win: 3, draw: 1, loss: 0 }),
     format: z.enum(["knockout", "round_robin"]),
     capacity: z.number().int().min(2).max(128),
     fee: z.number().int().min(0).max(10000000),
@@ -104,15 +121,25 @@ export const categoryInput = z
       .default({ winner: 400, runner: 250, semi: 150, participation: 40 }),
   })
   .superRefine((v, c) => {
+    if (v.team_max < v.team_min)
+      c.addIssue({
+        code: "custom",
+        message: "Maximum roster size must be at least the minimum",
+      });
+    if (v.scoring_mode === "score" && v.best_of !== 1)
+      c.addIssue({
+        code: "custom",
+        message: "Final-score matches must use best of 1",
+      });
     if (v.max_age < v.min_age)
       c.addIssue({
         code: "custom",
         message: "Maximum age must be at least minimum age",
       });
-    if (v.gender === "mixed" && v.entry_type !== "doubles")
+    if (v.gender === "mixed" && v.entry_type === "singles")
       c.addIssue({
         code: "custom",
-        message: "Mixed categories require doubles",
+        message: "Mixed categories require doubles or teams",
       });
     if (v.format === "round_robin" && v.capacity > 24)
       c.addIssue({
@@ -127,6 +154,40 @@ export const eventInput = z
     city: text,
     state: text,
     venue: text,
+    details: z
+      .object({
+        description: z.string().trim().max(3000).default(""),
+        organizer_name: z.string().trim().max(200).default(""),
+        contact_phone: z
+          .string()
+          .trim()
+          .max(18)
+          .refine(
+            (v) => !v || /^\+?[0-9 ()-]{10,18}$/.test(v),
+            "Enter a valid organiser phone number",
+          )
+          .default(""),
+        contact_email: z.union([z.literal(""), z.email()]).default(""),
+        address: z.string().trim().max(500).default(""),
+        map_url: z
+          .union([
+            z.literal(""),
+            z
+              .url()
+              .refine((v) => v.startsWith("https://"), "Use an HTTPS map link"),
+          ])
+          .default(""),
+        equipment: z.string().trim().max(2000).default(""),
+      })
+      .default({
+        description: "",
+        organizer_name: "",
+        contact_phone: "",
+        contact_email: "",
+        address: "",
+        map_url: "",
+        equipment: "",
+      }),
     starts_at: z.iso.datetime({ offset: true }),
     ends_at: z.iso.datetime({ offset: true }),
     registration_deadline: z.iso.datetime({ offset: true }),
@@ -155,6 +216,8 @@ export const eventInput = z
 export const entryInput = z.object({
   category_id: z.uuid(),
   athlete_id: z.uuid(),
+  team_name: z.string().trim().min(2).max(100).optional(),
+  roster_size: z.number().int().min(2).max(50).optional(),
   emergency_contact: text,
   school: optional,
   accepted_rules: z.literal(true),
@@ -177,12 +240,18 @@ export const resultInput = z.object({
   sets: z
     .array(
       z.tuple([
-        z.number().int().min(0).max(99),
-        z.number().int().min(0).max(99),
+        z.number().int().min(0).max(100000),
+        z.number().int().min(0).max(100000),
       ]),
     )
     .max(5),
-  outcome: z.enum(["played", "walkover", "withdrawal", "double_withdrawal"]),
+  outcome: z.enum([
+    "played",
+    "draw",
+    "walkover",
+    "withdrawal",
+    "double_withdrawal",
+  ]),
   version: z.number().int().min(0),
 });
 export function ageAt(dob: string, cutoff: string) {

@@ -218,7 +218,17 @@ export function AthleteScreen({
               </div>
               {en.status === "partner_pending" && (
                 <div className="rules-box">
-                  <strong>Invite your doubles partner</strong>
+                  <strong>
+                    {en.team_name
+                      ? `Invite players to ${en.team_name}`
+                      : "Invite your doubles partner"}
+                  </strong>
+                  {en.team_name && (
+                    <p>
+                      {en.members?.length || 0} of {en.roster_size} players
+                      accepted. Payment opens when the roster is complete.
+                    </p>
+                  )}
                   <p>
                     The partner selects their own eligible profile and accepts
                     the rules.

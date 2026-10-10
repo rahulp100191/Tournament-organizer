@@ -22,6 +22,7 @@ import {
   seedSlots,
 } from "../server/competition.js";
 import { createApp } from "../server/app.js";
+import { standings } from "../server/competition.js";
 import { exportData, restoreData } from "../server/backup.js";
 let pg: PGlite, db: Database, server: any, url: string;
 const admin: Account = {
@@ -73,6 +74,13 @@ async function event(overrides: any = {}, catOverrides: any = {}) {
     city: "Guwahati",
     state: "Assam",
     venue: "Test Court",
+    details: {
+      description: "A friendly community tournament.",
+      organizer_name: "Test Organiser",
+      contact_phone: "9999999999",
+      contact_email: "organiser@example.test",
+      address: "Test Court, Main Road, Guwahati",
+    },
     starts_at: iso(7),
     ends_at: iso(8),
     registration_deadline: iso(6),
@@ -200,6 +208,304 @@ before(async () => {
   await new Promise<void>((r) => server.once("listening", r));
   url = "http://127.0.0.1:" + server.address().port;
 });
+test("Custom-sport tournaments require public organiser fields and athlete-only profile controls", async () => {
+  const incomplete = await event({ sport: "futsal", details: {} });
+  await assert.rejects(
+    eventStatus(db, admin, incomplete.id, "published"),
+    /description, organiser/,
+  );
+  const complete = await event({ sport: "Ultimate Frisbee" });
+  await eventStatus(db, admin, complete.id, "published");
+  const published = (await request("/events/" + complete.id)).json.data;
+  assert.equal(published.sport, "Ultimate Frisbee");
+  assert.equal(published.details.contact_email, "organiser@example.test");
+  assert.equal(
+    (await request("/me/profiles", "admin", "POST", profile(0))).status,
+    403,
+  );
+  assert.equal(
+    (await request("/me/profiles/" + athletes[0], "admin", "PUT", profile(0)))
+      .status,
+    403,
+  );
+  assert.equal(
+    (await request("/me/profiles/" + athletes[0], "admin", "DELETE")).status,
+    403,
+  );
+  assert.equal(
+    (await request("/admin/rankings/review", "admin", "POST", {})).status,
+    404,
+  );
+  await assert.rejects(saveEvent(db, people[0], {}), /Only Admin/);
+});
+
+test("Whole teams require independent athlete consent, one complete roster per slot, one payment, and team-named fixtures", async () => {
+  const players: { account: Account; id: string }[] = [];
+  for (let i = 0; i < 9; i++) {
+    const account: Account = {
+      id: randomUUID(),
+      email: `team-${randomUUID()}@example.test`,
+      role: "athlete",
+    };
+    await db.query(
+      "INSERT INTO accounts(id,firebase_uid,email,role) VALUES($1,$2,$3,$4)",
+      [account.id, account.id, account.email, account.role],
+    );
+    const id = await saveProfile(
+      db,
+      account,
+      profile(i, {
+        ...(i === 2
+          ? {
+              kind: "junior",
+              dob: "2017-06-12",
+              guardian_name: "Test Guardian",
+              guardian_relationship: "Parent",
+              consent: true,
+            }
+          : {}),
+        sports: [
+          {
+            sport: "futsal",
+            level: "Amateur",
+            years: 2,
+            primary_sport: true,
+            categories: ["team"],
+            rankings: [],
+          },
+        ],
+      }),
+    );
+    players.push({ account, id });
+  }
+  const tournament = await event(
+    { sport: "Futsal" },
+    {
+      entry_type: "team",
+      min_age: 8,
+      capacity: 2,
+      team_min: 3,
+      team_max: 5,
+      scoring_mode: "score",
+      best_of: 1,
+    },
+  );
+  await eventStatus(db, admin, tournament.id, "published");
+  const start = (i: number, name: string, size = 3) =>
+    register(db, players[i].account, {
+      category_id: tournament.category.id,
+      athlete_id: players[i].id,
+      team_name: name,
+      roster_size: size,
+      emergency_contact: "Contact 9999999999",
+      accepted_rules: true,
+      idempotency_key: randomUUID(),
+    });
+  await assert.rejects(start(0, "Too small", 2), /roster size/);
+  const first = await start(0, "Rally Reds");
+  await assert.rejects(start(0, "Rally Reds"), /already has an entry/);
+  await assert.rejects(
+    submitPayment(
+      db,
+      players[0].account,
+      first.id,
+      {
+        reference: "TEST-NOTREADY",
+        payer_name: "Test",
+        paid_at: new Date().toISOString(),
+      },
+      "test",
+    ),
+    /cannot accept/,
+  );
+  await acceptPartner(
+    db,
+    players[1].account,
+    first.invite_token,
+    players[1].id,
+  );
+  assert.equal(
+    (await db.query("SELECT status FROM entries WHERE id=$1", [first.id]))
+      .rows[0].status,
+    "partner_pending",
+  );
+  await assert.rejects(
+    acceptPartner(db, players[1].account, first.invite_token, players[1].id),
+    /already has an entry/,
+  );
+  await acceptPartner(
+    db,
+    players[2].account,
+    first.invite_token,
+    players[2].id,
+  );
+  const pay = await submitPayment(
+    db,
+    players[0].account,
+    first.id,
+    {
+      reference: "TEST-TEAM-" + randomUUID().slice(0, 20),
+      payer_name: "Captain",
+      paid_at: new Date().toISOString(),
+    },
+    "test",
+  );
+  await reviewPayment(db, admin, pay, true, "Verified team test payment");
+  const second = await start(3, "Rally Blues"),
+    third = await start(6, "Rally Greens");
+  await acceptPartner(
+    db,
+    players[4].account,
+    second.invite_token,
+    players[4].id,
+  );
+  await acceptPartner(
+    db,
+    players[7].account,
+    third.invite_token,
+    players[7].id,
+  );
+  const final = await Promise.allSettled([
+    acceptPartner(db, players[5].account, second.invite_token, players[5].id),
+    acceptPartner(db, players[8].account, third.invite_token, players[8].id),
+  ]);
+  assert.equal(final.filter((r) => r.status === "fulfilled").length, 1);
+  const reserved = (
+    await db.query(
+      "SELECT * FROM entries WHERE category_id=$1 AND status='awaiting_payment'",
+      [tournament.category.id],
+    )
+  ).rows;
+  assert.equal(reserved.length, 1);
+  assert.equal(
+    (
+      await db.query(
+        "SELECT count(*)::int n FROM entry_members WHERE entry_id=$1",
+        [first.id],
+      )
+    ).rows[0].n,
+    3,
+  );
+  const owner = players.find((p) => p.account.id === reserved[0].owner_id)!;
+  const paid = await submitPayment(
+    db,
+    owner.account,
+    reserved[0].id,
+    {
+      reference: "TEST-TEAM-" + randomUUID().slice(0, 20),
+      payer_name: "Captain",
+      paid_at: new Date().toISOString(),
+    },
+    "test",
+  );
+  await reviewPayment(db, admin, paid, true, "Verified second team");
+  await draw(db, admin, tournament.category.id);
+  const publicMatches = (await request("/events/" + tournament.id + "/matches"))
+    .json.data;
+  assert.ok(publicMatches[0].label_a.startsWith("Rally "));
+  await recordResult(db, admin, publicMatches[0].id, {
+    winner_id: publicMatches[0].entry_a,
+    sets: [[250, 230]],
+    outcome: "played",
+    version: 0,
+  });
+  assert.equal(
+    (
+      await db.query(
+        "SELECT count(*)::int n FROM awards WHERE category_id=$1",
+        [tournament.category.id],
+      )
+    ).rows[0].n,
+    6,
+  );
+  const mixed = await event(
+    { sport: "Futsal" },
+    { entry_type: "team", team_min: 2, team_max: 2, gender: "mixed", fee: 0 },
+  );
+  await eventStatus(db, admin, mixed.id, "published");
+  const mixedEntry = await register(db, players[0].account, {
+    category_id: mixed.category.id,
+    athlete_id: players[0].id,
+    team_name: "Mixed roster",
+    roster_size: 2,
+    emergency_contact: "Contact 9999999999",
+    accepted_rules: true,
+    idempotency_key: randomUUID(),
+  });
+  await assert.rejects(
+    acceptPartner(
+      db,
+      players[6].account,
+      mixedEntry.invite_token,
+      players[6].id,
+    ),
+    /at least one male and one female/,
+  );
+  await acceptPartner(
+    db,
+    players[1].account,
+    mixedEntry.invite_token,
+    players[1].id,
+  );
+  assert.equal(
+    (await db.query("SELECT status FROM entries WHERE id=$1", [mixedEntry.id]))
+      .rows[0].status,
+    "confirmed",
+  );
+});
+
+test("Round-robin final-score draws update league points and corrections replace them", async () => {
+  const e = await event(
+    {},
+    {
+      format: "round_robin",
+      scoring_mode: "score",
+      best_of: 1,
+      fee: 0,
+      capacity: 2,
+    },
+  );
+  await eventStatus(db, admin, e.id, "published");
+  await entry(e.category.id, 0);
+  await entry(e.category.id, 1);
+  await draw(db, admin, e.category.id);
+  const m = (
+    await db.query("SELECT * FROM matches WHERE category_id=$1", [
+      e.category.id,
+    ])
+  ).rows[0];
+  await recordResult(db, admin, m.id, {
+    winner_id: null,
+    sets: [[0, 0]],
+    outcome: "draw",
+    version: 0,
+  });
+  const table = await standings(db, e.category.id);
+  assert.ok(
+    table.every(
+      (row) => row.draws === 1 && row.table_points === 1 && row.losses === 0,
+    ),
+  );
+  await recordResult(db, admin, m.id, {
+    winner_id: m.entry_a,
+    sets: [[2, 1]],
+    outcome: "played",
+    version: 1,
+  });
+  const corrected = await standings(db, e.category.id);
+  assert.equal(corrected[0].table_points, 3);
+  assert.ok(corrected.every((row) => row.draws === 0));
+  assert.equal(
+    (
+      await db.query(
+        "SELECT count(*)::int n FROM awards WHERE category_id=$1",
+        [e.category.id],
+      )
+    ).rows[0].n,
+    2,
+  );
+});
+
 after(async () => {
   server?.close();
   await pg?.close();

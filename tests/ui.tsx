@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { api } from "../src/api";
 import { AthleteScreen } from "../src/AthleteScreen";
 import { AdminScreen } from "../src/AdminScreen";
+import { EventScreen } from "../src/EventScreen";
 import "../src/style.css";
 import "../src/platform.css";
 function Harness() {
@@ -25,6 +26,16 @@ function Harness() {
           {me ? (
             new URLSearchParams(location.search).get("role") === "admin" ? (
               <AdminScreen />
+            ) : new URLSearchParams(location.search).get("event") ? (
+              <EventScreen
+                id={new URLSearchParams(location.search).get("event")!}
+                me={me}
+                onLogin={() => {}}
+                onRegistered={() => {
+                  location.href = "/tests/ui.html";
+                }}
+                onBack={() => {}}
+              />
             ) : (
               <AthleteScreen me={me} refresh={refresh} openEvent={() => {}} />
             )

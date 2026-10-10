@@ -5,6 +5,8 @@ const screens = [
   ["Guardian onboarding", "junior-phone.png"],
   ["Admin payment review", "admin-payments.png"],
   ["Admin event creation", "admin-event-form.png"],
+  ["Whole-team registration", "team-registration-phone.png"],
+  ["Team invitations", "team-invitation-phone.png"],
 ];
 export function PreviewScreen() {
   const [selected, setSelected] = useState(0);
@@ -16,7 +18,8 @@ export function PreviewScreen() {
           <h1>Athlete & admin screen preview</h1>
           <p>
             Captured from the working local integration tests using fictional
-            data. Connected accounts become available after provider setup.
+            data. Sign in to create your own athlete profile or manage
+            tournaments.
           </p>
         </div>
       </div>
@@ -35,7 +38,7 @@ export function PreviewScreen() {
         <img
           style={{
             width: "100%",
-            maxWidth: selected === 0 || selected === 2 ? 440 : 1000,
+            maxWidth: screens[selected][1].includes("phone") ? 440 : 1000,
             display: "block",
             margin: "auto",
             border: "1px solid #dce4d1",
@@ -50,8 +53,8 @@ export function PreviewScreen() {
         <p>
           Android: download the signed test APK, open it on your phone and allow
           installation from your browser when Android asks. This test app opens
-          the same Vercel site; provider configuration is still needed for
-          sign-in and shared registrations.
+          the same Vercel site, including shared tournaments and Firebase
+          sign-in.
         </p>
         <a
           className="button"

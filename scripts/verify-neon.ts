@@ -8,6 +8,7 @@ import {
   saveEvent,
   eventStatus,
   register,
+  acceptPartner,
   type Account,
 } from "../server/domain.js";
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
@@ -69,6 +70,14 @@ try {
         phone: "9999999999",
         sports: [
           {
+            sport: "Futsal",
+            level: "Amateur",
+            years: 1,
+            primary_sport: false,
+            categories: ["team"],
+            rankings: [],
+          },
+          {
             sport: "Badminton",
             level: "Amateur",
             years: 1,
@@ -82,12 +91,19 @@ try {
   const iso = (days: number) =>
       new Date(Date.now() + days * 86400000).toISOString(),
     admin = accounts[0];
-  const event = await saveEvent(db, admin, {
+  const eventData = {
     name: "Isolated concurrency check",
     sport: "Badminton",
     state: "Assam",
     city: "Guwahati",
     venue: "Test court",
+    details: {
+      description: "Database contention verification tournament.",
+      organizer_name: "Test Organiser",
+      contact_phone: "9999999999",
+      contact_email: "organiser@example.test",
+      address: "Test Court, Main Road",
+    },
     starts_at: iso(7),
     ends_at: iso(8),
     registration_deadline: iso(6),
@@ -108,7 +124,8 @@ try {
         levels: ["Amateur"],
       },
     ],
-  });
+  };
+  const event = await saveEvent(db, admin, eventData);
   await eventStatus(db, admin, event, "published");
   const cat = (
     await db.query("SELECT id FROM categories WHERE event_id=$1", [event])
@@ -135,6 +152,55 @@ try {
   );
   console.log(
     "Neon pooled connections verified: one concurrent final-slot request succeeded; one was rejected.",
+  );
+  const teamEvent = await saveEvent(db, admin, {
+    ...eventData,
+    name: "Isolated Futsal team check",
+    sport: "Futsal",
+    categories: [
+      {
+        ...eventData.categories[0],
+        entry_type: "team",
+        team_min: 3,
+        team_max: 5,
+        scoring_mode: "score",
+        best_of: 1,
+      },
+    ],
+  });
+  await eventStatus(db, admin, teamEvent, "published");
+  const teamCat = (
+    await db.query("SELECT id FROM categories WHERE event_id=$1", [teamEvent])
+  ).rows[0].id;
+  const team = await register(db, accounts[1], {
+    category_id: teamCat,
+    athlete_id: athletes[0],
+    team_name: "Isolated Test Team",
+    roster_size: 3,
+    emergency_contact: "Test contact",
+    accepted_rules: true,
+    idempotency_key: randomUUID(),
+  });
+  await Promise.all([
+    acceptPartner(db, accounts[2], team.invite_token, athletes[1]),
+    acceptPartner(db, accounts[3], team.invite_token, athletes[2]),
+  ]);
+  assert.equal(
+    (await db.query("SELECT status FROM entries WHERE id=$1", [team.id]))
+      .rows[0].status,
+    "confirmed",
+  );
+  assert.equal(
+    (
+      await db.query(
+        "SELECT count(*)::int n FROM entry_members WHERE entry_id=$1",
+        [team.id],
+      )
+    ).rows[0].n,
+    3,
+  );
+  console.log(
+    "Neon custom-sport whole-team registration and concurrent roster acceptance verified.",
   );
 } finally {
   if (created) await pool.query(`DROP SCHEMA ${schema} CASCADE`);

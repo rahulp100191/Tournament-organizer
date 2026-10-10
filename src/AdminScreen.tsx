@@ -1,10 +1,15 @@
 import { useEffect, useState } from "react";
-import { api, date, levels, money, sports, upload } from "./api";
+import { api, date, levels, money, upload } from "./api";
+import { SportInput } from "./SportInput";
 import { auth } from "./Auth";
 import { localTime } from "./AthleteScreen";
 const category = () => ({
   name: "Open singles",
   entry_type: "singles",
+  team_min: 2,
+  team_max: 2,
+  scoring_mode: "sets",
+  league_points: { win: 3, draw: 1, loss: 0 },
   format: "knockout",
   capacity: 16,
   fee: 50000,
@@ -85,7 +90,10 @@ export function AdminScreen() {
         <div>
           <span className="eyebrow">ORGANISER DESK</span>
           <h1>Tournament operations</h1>
-          <p>Publish events. Verify entries. Keep every decision traceable.</p>
+          <p>
+            Create and publish tournaments for any sport. Athlete profiles are
+            maintained only by athletes and guardians.
+          </p>
         </div>
         <button
           className="button"
@@ -94,27 +102,21 @@ export function AdminScreen() {
             setTab("events");
           }}
         >
-          Create event
+          Create tournament
         </button>
       </div>
       <div className="sport-tabs">
-        {[
-          "events",
-          "payments",
-          "refunds",
-          "fixtures",
-          "rankings",
-          "disputes",
-          "audit",
-        ].map((t) => (
-          <button
-            className={tab === t ? "active" : ""}
-            key={t}
-            onClick={() => setTab(t)}
-          >
-            {t}
-          </button>
-        ))}
+        {["events", "payments", "refunds", "fixtures", "disputes", "audit"].map(
+          (t) => (
+            <button
+              className={tab === t ? "active" : ""}
+              key={t}
+              onClick={() => setTab(t)}
+            >
+              {t}
+            </button>
+          ),
+        )}
       </div>
       {error && (
         <p role="alert" className="error">
@@ -533,57 +535,6 @@ export function AdminScreen() {
               )}
             </>
           )}
-          {tab === "rankings" && (
-            <>
-              {!data.claims.length && (
-                <section className="panel">
-                  <p>No official ranking claims submitted.</p>
-                </section>
-              )}
-              {data.claims.map((c: any) => (
-                <section className="panel" key={c.athlete_id + c.sport}>
-                  <h2>
-                    {c.name} · {c.sport}
-                  </h2>
-                  {c.rankings.map((r: any) => (
-                    <div className="category-line" key={r.scope}>
-                      <strong>
-                        {r.scope} #{r.rank} · {r.authority}
-                      </strong>
-                      <p>
-                        {r.category} · {r.date} ·{" "}
-                        {r.player_id || "No membership ID"}
-                      </p>
-                      {r.source && (
-                        <a href={r.source} target="_blank" rel="noreferrer">
-                          Review source
-                        </a>
-                      )}
-                      <p>
-                        {c.reviews.find((v: any) => v.scope === r.scope)
-                          ?.status || "Self-reported"}
-                      </p>
-                      <ReviewForm
-                        busy={busy}
-                        label="I reviewed the supplied ranking source."
-                        onReview={(approved, reason) =>
-                          act(() =>
-                            api("/admin/rankings/review", "POST", {
-                              athlete_id: c.athlete_id,
-                              sport: c.sport,
-                              scope: r.scope,
-                              status: approved ? "verified" : "rejected",
-                              reason,
-                            }),
-                          )
-                        }
-                      />
-                    </div>
-                  ))}
-                </section>
-              ))}
-            </>
-          )}
           {tab === "disputes" && (
             <>
               {!data.disputes.length && (
@@ -698,7 +649,7 @@ function MatchForm({
         {m.label_a || "Awaiting opponent"} vs {m.label_b || "Awaiting opponent"}
       </h3>
       <p>
-        {date(m.scheduled_at)} · {m.court || "Court not assigned"}
+        {date(m.scheduled_at)} · {m.court || "Playing area not assigned"}
       </p>
       {m.status === "pending" && (
         <form
@@ -715,7 +666,7 @@ function MatchForm({
         >
           <div className="form-grid">
             <label className="field">
-              Court
+              Court / ground / playing area
               <input name="court" required defaultValue={m.court || ""} />
             </label>
             <label className="field">
@@ -746,7 +697,11 @@ function MatchForm({
                 ? raw.split(",").map((s) => s.trim().split("-").map(Number))
                 : [];
               await api("/admin/matches/" + m.id + "/result", "POST", {
-                winner_id: f.get("winner") || null,
+                winner_id: ["draw", "double_withdrawal"].includes(
+                  String(f.get("outcome")),
+                )
+                  ? null
+                  : f.get("winner") || null,
                 sets,
                 outcome: f.get("outcome"),
                 version: m.version,
@@ -760,7 +715,7 @@ function MatchForm({
               <select name="winner" defaultValue={m.winner_id || m.entry_a}>
                 <option value={m.entry_a}>{m.label_a}</option>
                 <option value={m.entry_b}>{m.label_b}</option>
-                <option value="">Neither (double withdrawal)</option>
+                <option value="">No winner (draw or double withdrawal)</option>
               </select>
             </label>
             <label className="field">
@@ -769,18 +724,26 @@ function MatchForm({
                 name="outcome"
                 defaultValue={m.score?.outcome || "played"}
               >
-                {["played", "walkover", "withdrawal", "double_withdrawal"].map(
-                  (v) => (
-                    <option key={v} value={v}>
-                      {v.replace("_", " ")}
-                    </option>
-                  ),
-                )}
+                {[
+                  "played",
+                  ...(m.format === "round_robin" && m.scoring_mode === "score"
+                    ? ["draw"]
+                    : []),
+                  "walkover",
+                  "withdrawal",
+                  "double_withdrawal",
+                ].map((v) => (
+                  <option key={v} value={v}>
+                    {v.replace("_", " ")}
+                  </option>
+                ))}
               </select>
             </label>
           </div>
           <label className="field">
-            Set scores, player A–B (example: 21-15,21-18)
+            {m.scoring_mode === "score"
+              ? "Final score, side A–B (example: 250-230)"
+              : "Set scores, player A–B (example: 21-15,21-18)"}
             <input
               name="sets"
               defaultValue={
@@ -808,22 +771,45 @@ export function EventForm({
   onCancel: () => void;
 }) {
   const [e, setE] = useState<any>(
-    event || {
-      name: "",
-      sport: "Badminton",
-      city: "",
-      state: "",
-      venue: "",
-      starts_at: "",
-      ends_at: "",
-      registration_deadline: "",
-      withdrawal_deadline: "",
-      age_cutoff: "",
-      rules: "",
-      refund_policy: "",
-      poster_url: "",
-      categories: [category()],
-    },
+    event
+      ? {
+          ...event,
+          details: {
+            description: "",
+            organizer_name: "",
+            contact_phone: "",
+            contact_email: "",
+            address: "",
+            map_url: "",
+            equipment: "",
+            ...event.details,
+          },
+        }
+      : {
+          name: "",
+          sport: "Badminton",
+          city: "",
+          state: "",
+          venue: "",
+          details: {
+            description: "",
+            organizer_name: "",
+            contact_phone: "",
+            contact_email: "",
+            address: "",
+            map_url: "",
+            equipment: "",
+          },
+          starts_at: "",
+          ends_at: "",
+          registration_deadline: "",
+          withdrawal_deadline: "",
+          age_cutoff: "",
+          rules: "",
+          refund_policy: "",
+          poster_url: "",
+          categories: [category()],
+        },
   );
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -884,17 +870,7 @@ export function EventForm({
             />
           </label>
         ))}
-        <label className="field">
-          Sport
-          <select
-            value={e.sport}
-            onChange={(ev) => set("sport", ev.target.value)}
-          >
-            {sports.map((v) => (
-              <option key={v}>{v}</option>
-            ))}
-          </select>
-        </label>
+        <SportInput value={e.sport} onChange={(v) => set("sport", v)} />
         {[
           ["starts_at", "Starts"],
           ["ends_at", "Ends"],
@@ -921,6 +897,56 @@ export function EventForm({
           />
         </label>
       </div>
+      <h3>About the tournament & organiser</h3>
+      <label className="field">
+        Tournament description
+        <textarea
+          required
+          minLength={10}
+          maxLength={3000}
+          value={e.details.description}
+          onChange={(ev) =>
+            set("details", { ...e.details, description: ev.target.value })
+          }
+        />
+      </label>
+      <div className="form-grid">
+        {[
+          ["organizer_name", "Organiser / organisation", "text"],
+          ["contact_phone", "Public organiser phone", "tel"],
+          ["contact_email", "Public organiser email", "email"],
+          ["address", "Full venue address", "text"],
+          ["map_url", "Venue map link (optional)", "url"],
+        ].map(([key, label, type]) => (
+          <label className="field" key={key}>
+            {label}
+            <input
+              required={key !== "map_url"}
+              type={type}
+              maxLength={key === "address" ? 500 : 200}
+              value={e.details[key]}
+              onChange={(ev) =>
+                set("details", { ...e.details, [key]: ev.target.value })
+              }
+            />
+          </label>
+        ))}
+      </div>
+      <label className="field">
+        Equipment, check-in and arrival instructions (optional)
+        <textarea
+          maxLength={2000}
+          value={e.details.equipment}
+          onChange={(ev) =>
+            set("details", { ...e.details, equipment: ev.target.value })
+          }
+        />
+      </label>
+      <p>
+        Organiser contacts and venue details are public. Dates and times use
+        your device’s local time zone. Team roster size includes substitutes;
+        describe playing-side size and tie-break rules below.
+      </p>
       <label className="field">
         Event poster (optional, maximum 2 MB)
         <input
@@ -983,10 +1009,32 @@ export function EventForm({
               Entry type
               <select
                 value={c.entry_type}
-                onChange={(ev) => cat(i, "entry_type", ev.target.value)}
+                onChange={(ev) => {
+                  const type = ev.target.value;
+                  set(
+                    "categories",
+                    e.categories.map((item: any, j: number) =>
+                      j === i
+                        ? {
+                            ...item,
+                            entry_type: type,
+                            ...(type === "team"
+                              ? {
+                                  team_min: 5,
+                                  team_max: 12,
+                                  scoring_mode: "score",
+                                  best_of: 1,
+                                }
+                              : {}),
+                          }
+                        : item,
+                    ),
+                  );
+                }}
               >
-                <option value="singles">Singles</option>
+                <option value="singles">Individual / singles</option>
                 <option value="doubles">Doubles</option>
+                <option value="team">Whole team</option>
               </select>
             </label>
             <label className="field">
@@ -1033,10 +1081,50 @@ export function EventForm({
                 ))}
               </select>
             </label>
+            {c.entry_type === "team" &&
+              ["team_min", "team_max"].map((key) => (
+                <label className="field" key={key}>
+                  {key === "team_min"
+                    ? "Minimum roster size"
+                    : "Maximum roster size"}
+                  <input
+                    required
+                    type="number"
+                    min={2}
+                    max={50}
+                    value={c[key]}
+                    onChange={(ev) => cat(i, key, Number(ev.target.value))}
+                  />
+                </label>
+              ))}
+            <label className="field">
+              Scoring
+              <select
+                value={c.scoring_mode || "sets"}
+                onChange={(ev) =>
+                  set(
+                    "categories",
+                    e.categories.map((item: any, j: number) =>
+                      j === i
+                        ? {
+                            ...item,
+                            scoring_mode: ev.target.value,
+                            best_of: ev.target.value === "score" ? 1 : 3,
+                          }
+                        : item,
+                    ),
+                  )
+                }
+              >
+                <option value="sets">Best of sets / games</option>
+                <option value="score">One final score</option>
+              </select>
+            </label>
             <label className="field">
               Best of
               <select
                 value={c.best_of}
+                disabled={c.scoring_mode === "score"}
                 onChange={(ev) => cat(i, "best_of", Number(ev.target.value))}
               >
                 {[1, 3, 5].map((v) => (
@@ -1065,6 +1153,28 @@ export function EventForm({
               </label>
             ))}
           </div>
+          {c.format === "round_robin" && c.scoring_mode === "score" && (
+            <div className="form-grid">
+              {["win", "draw", "loss"].map((key) => (
+                <label className="field" key={key}>
+                  League points for a {key}
+                  <input
+                    required
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={c.league_points[key]}
+                    onChange={(ev) =>
+                      cat(i, "league_points", {
+                        ...c.league_points,
+                        [key]: Number(ev.target.value),
+                      })
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          )}
           <label className="check-label">
             <input
               type="checkbox"
